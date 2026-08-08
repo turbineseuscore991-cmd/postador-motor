@@ -51,6 +51,16 @@ def recolher() -> bool:
     return False
 
 
+# O log vai para ~/Library/Logs, que é o lugar do macOS para isso.
+#
+# Antes ficava em vigia.log dentro da pasta do projeto, e isso QUEBROU o
+# agente: o arquivo ganhou o atributo estendido `com.apple.macl` (a lista de
+# controle da proteção de privacidade), o launchd não conseguiu mais abri-lo e
+# passou a sair com EX_CONFIG antes de executar uma linha sequer. O sintoma
+# era mudo — nenhum erro, nenhum log, e o bot do Telegram respondendo só pela
+# nuvem, de hora em hora.
+LOG = Path.home() / "Library" / "Logs" / f"{marca.CHAVE}-vigia.log"
+
 LOG_MAX = 5_000_000        # 5 MB
 
 
@@ -61,7 +71,7 @@ def aparar_log():
     chegou a 141 MB de um erro repetido. Guardar o fim, não o começo: para
     diagnosticar, o que importa é o que aconteceu por último.
     """
-    log = RAIZ / "vigia.log"
+    log = LOG
     try:
         if log.exists() and log.stat().st_size > LOG_MAX:
             fim = log.read_bytes()[-LOG_MAX // 2:]
@@ -110,6 +120,7 @@ def instalar():
     rastro. Vivo, ele responde em segundos e o launchd reergue se morrer.
     """
     PLIST.parent.mkdir(parents=True, exist_ok=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
     PLIST.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -125,8 +136,8 @@ def instalar():
   <key>KeepAlive</key><true/>
   <key>RunAtLoad</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>{RAIZ / "vigia.log"}</string>
-  <key>StandardErrorPath</key><string>{RAIZ / "vigia.log"}</string>
+  <key>StandardOutPath</key><string>{LOG}</string>
+  <key>StandardErrorPath</key><string>{LOG}</string>
   <key>WorkingDirectory</key><string>{RAIZ}</string>
 </dict>
 </plist>
