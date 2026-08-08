@@ -51,6 +51,28 @@ def recolher() -> bool:
     return False
 
 
+LOG_MAX = 5_000_000        # 5 MB
+
+
+def aparar_log():
+    """Corta o log se passou do tamanho, guardando o FIM.
+
+    O launchd escreve neste arquivo para sempre e ninguém limpa. Em 06/08 ele
+    chegou a 141 MB de um erro repetido. Guardar o fim, não o começo: para
+    diagnosticar, o que importa é o que aconteceu por último.
+    """
+    log = RAIZ / "vigia.log"
+    try:
+        if log.exists() and log.stat().st_size > LOG_MAX:
+            fim = log.read_bytes()[-LOG_MAX // 2:]
+            log.write_bytes("[log aparado — guardado o fim]\n".encode() + fim)
+    except Exception:
+        pass       # log grande incomoda, mas não pode derrubar o vigia
+
+
+_falhas_seguidas = 0
+
+
 def responder_telegram(espera=0):
     """Responde o que o Luiz perguntou no bot, no próprio processo.
 
@@ -58,13 +80,26 @@ def responder_telegram(espera=0):
     consultas simultâneas com o mesmo token, então elas se atropelavam e o bot
     parecia congelado — uma consulta chegou a levar 41 segundos para devolver
     "nada novo". Agora é uma escuta longa só, aqui dentro.
+
+    Falha em série RECUA em vez de insistir. Sem isso uma queda de rede vira um
+    erro por segundo: em 06/08 o vigia gravou 141 MB de "Resource deadlock
+    avoided" até o launchd desistir dele, e o bot passou dias respondendo só
+    pela nuvem, de hora em hora. Foi essa a lentidão que o Luiz notou.
     """
+    global _falhas_seguidas
     try:
         n = bot.uma_rodada(espera=espera)
         if n:
             print(f'  💬 {n} recado(s) respondido(s)', flush=True)
+        _falhas_seguidas = 0
     except Exception as e:
-        print(f'  ❌ bot falhou: {type(e).__name__}: {e}', flush=True)
+        _falhas_seguidas += 1
+        # fala nas 3 primeiras e depois de 100 em 100: o log serve para
+        # diagnosticar, não para encher o disco
+        if _falhas_seguidas <= 3 or _falhas_seguidas % 100 == 0:
+            print(f'  ❌ bot falhou ({_falhas_seguidas}×): '
+                  f'{type(e).__name__}: {e}', flush=True)
+        time.sleep(min(300, 5 * 2 ** min(_falhas_seguidas, 6)))
 
 
 def instalar():
@@ -136,6 +171,7 @@ def main():
         responder_telegram()
         return 0
 
+    aparar_log()
     print(f"👀 Vigiando {DOWNLOADS} e escutando o Telegram (Ctrl+C para parar)",
           flush=True)
     try:
