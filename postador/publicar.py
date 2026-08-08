@@ -34,6 +34,7 @@ except ImportError:
     pass
 
 from . import meta_api  # noqa: E402
+import marca  # noqa: E402   (do cliente)
 
 BRT = timezone(timedelta(hours=-3))
 POSTS = RAIZ / "posts"
@@ -47,7 +48,7 @@ ADIANTAMENTO = timedelta(minutes=20)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s",
-                    handlers=[logging.FileHandler(RAIZ / "arcoreal-bot.log"),
+                    handlers=[logging.FileHandler(RAIZ / f"{marca.CHAVE}-bot.log"),
                               logging.StreamHandler()])
 log = logging.getLogger("publicar")
 
@@ -191,6 +192,10 @@ def url_publica(caminho: Path):
 # Publicação
 # ---------------------------------------------------------------------------
 
+class MetaErroDeConfig(Exception):
+    """Configuração do cliente errada — não adianta tentar de novo."""
+
+
 class ReelSemVideo(Exception):
     """Reel aprovado cujo vídeo ainda não foi produzido — espera, não falha."""
 
@@ -297,33 +302,50 @@ def publicar_post(post, legenda, simular=False):
     def primeira(x):
         return x[0] if isinstance(x, list) else x
 
+    # Nem todo cliente tem as duas redes. `marca.REDES` diz quais valem — sem
+    # isto, um cliente só de Facebook (a página do rabino) falharia toda vez
+    # tentando publicar num Instagram que não existe.
+    redes = getattr(marca, "REDES", ("instagram", "facebook"))
+    no_ig, no_fb = "instagram" in redes, "facebook" in redes
+
     if tipo == "carrossel":
         # cada slide pode ter vários endereços; escolhe o que a Meta aceitar
         urls = []
         for i in range(len(post["carrossel"])):
             cands = url_publica(RAIZ / "posts" / "imagens" / f'{post["id"]}_{i}.jpg')
             urls.append(com_urls(cands, lambda u: meta_api.ig_validar_imagem(u)))
-        resultado["instagram"] = meta_api.ig_publicar_carrossel(urls, legenda)
-        resultado["facebook"] = meta_api.fb_publicar_foto(urls[0], legenda)
+        if no_ig:
+            resultado["instagram"] = meta_api.ig_publicar_carrossel(urls, legenda)
+        if no_fb:
+            resultado["facebook"] = meta_api.fb_publicar_foto(urls[0], legenda)
 
     elif tipo == "reel":
         url_video = primeira(url_publica(RAIZ / post["video"]))
         url_capa = primeira(url_publica(imagem))
-        resultado["instagram"] = meta_api.ig_publicar_reel(url_video, legenda, url_capa)
-        resultado["facebook"] = meta_api.fb_publicar_video(url_video, legenda)
+        if no_ig:
+            resultado["instagram"] = meta_api.ig_publicar_reel(
+                url_video, legenda, url_capa)
+        if no_fb:
+            resultado["facebook"] = meta_api.fb_publicar_video(url_video, legenda)
 
     else:  # foto e card
         url = url_publica(imagem)
-        resultado["instagram"] = com_urls(
-            url, lambda u: meta_api.ig_publicar_imagem(u, legenda))
+        if no_ig:
+            resultado["instagram"] = com_urls(
+                url, lambda u: meta_api.ig_publicar_imagem(u, legenda))
         url = primeira(url)
-        # o Facebook aceita agendamento nativo se a hora ainda não chegou
-        agenda = None
-        agora = datetime.now(BRT)
-        if quando > agora + timedelta(minutes=15):
-            agenda = quando.timestamp()
-        resultado["facebook"] = meta_api.fb_publicar_foto(url, legenda, agenda)
+        if no_fb:
+            # o Facebook aceita agendamento nativo se a hora ainda não chegou
+            agenda = None
+            agora = datetime.now(BRT)
+            if quando > agora + timedelta(minutes=15):
+                agenda = quando.timestamp()
+            resultado["facebook"] = meta_api.fb_publicar_foto(url, legenda, agenda)
 
+    if not resultado:
+        raise MetaErroDeConfig(
+            f'marca.REDES = {redes} não tem rede nenhuma reconhecida. '
+            'Use ("instagram",), ("facebook",) ou as duas.')
     return resultado
 
 

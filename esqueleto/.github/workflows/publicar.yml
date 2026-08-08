@@ -1,0 +1,149 @@
+name: Publicar Arco Real
+
+# O Instagram não guarda post agendado, então o relógio é este cron.
+# Horários de pico definidos pelo Luiz: 6h, 11h e 17h no horário de Brasília.
+# GitHub Actions só entende UTC, e o Brasil não tem mais horário de verão:
+#     06h BRT = 09:00 UTC
+#     11h BRT = 14:00 UTC
+#     17h BRT = 20:00 UTC
+# O cron do GitHub costuma atrasar alguns minutos em horário cheio, por isso
+# disparamos 5 minutos antes e o publicar.py aceita uma janela de tolerância.
+
+on:
+  schedule:
+    # As TRÊS faixas em que o Luiz posta, e só elas (Brasília → UTC, +3):
+    #     06h–09h  →  09:00–12:59 UTC
+    #     11h–13h  →  14:00–16:59 UTC
+    #     17h–20h  →  20:00–23:59 UTC
+    #
+    # DE HORA EM HORA, aos :05. Não mexer para frequência maior.
+    #
+    # Em 03/08 troquei isto por '*/20' achando que três chances por hora
+    # cobririam o atraso do GitHub. Deu o contrário: ele ESTRANGULA cron de
+    # alta frequência em repositório privado. Medido nos 7 dias seguintes —
+    # esperado × entregue por faixa:
+    #
+    #     de hora em hora (01/08):   4/4 · 3/3 · 4/4     ~100%
+    #     de 20 em 20 min (05/08):   3/12 · 2/9 · 3/12    ~25%
+    #                     (06/08):   2/12 · 1/9 · 0/12   ZERO à tarde
+    #
+    # O post das 17h de 06/08 morreu por isso: nenhum despertar entre 17h e
+    # 21h49, e aí já tinha passado da tolerância de 150 min. Pedindo três
+    # vezes mais, recebi menos.
+    #
+    # Custo: 11 despertares/dia ≈ 330 min/mês dos 2.000 grátis do plano Free.
+    #
+    # Mudou aqui? Mudar plano.JANELAS junto, senão o validador aprova post
+    # num horário em que o robô não acorda e ele some calado.
+    - cron: '5 9-12 * * *'
+    - cron: '5 14-16 * * *'
+    - cron: '5 20-23 * * *'
+    # 07h30 BRT: confere token, hospedagem e se os posts do dia estão aprovados.
+    # Avisa no Telegram ANTES de qualquer horário vencer — em 29/07 o token
+    # morreu no meio do dia e só descobrimos com o post das 17h perdido.
+    - cron: '30 10 * * *'
+  workflow_dispatch:
+    inputs:
+      forcar:
+        description: 'ID do post para publicar agora (ex: p01). Vazio = fluxo normal.'
+        required: false
+      simular:
+        description: 'Só simular, sem publicar'
+        type: boolean
+        default: false
+
+concurrency:
+  group: publicar-arcoreal
+  cancel-in-progress: false
+
+# necessário para o passo final gravar posts/publicados.json de volta no repo
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # O código que publica mora no motor compartilhado, fora deste
+      # repositório. Sem este passo o robô baixa só o plano e as fotos, e
+      # `import postador` falha — nenhum post sai.
+      #
+      # Vai para dentro da pasta de trabalho porque o actions/checkout recusa
+      # caminho fora dela; o `_motor.py` acha pelo POSTADOR_MOTOR, definido
+      # abaixo em `env:`.
+      - uses: actions/checkout@v4
+        with:
+          repository: turbineseuscore991-cmd/postador-motor
+          path: _motor_compartilhado
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install requests Pillow python-dotenv
+
+      - name: Checagem de saúde (só no cron das 07h30)
+        if: github.event.schedule == '30 10 * * *'
+        continue-on-error: true
+        env:
+          POSTADOR_MOTOR: ${{ github.workspace }}/_motor_compartilhado
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          META_USER_TOKEN: ${{ secrets.META_USER_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          MIDIA_BASE_URL: ${{ secrets.MIDIA_BASE_URL }}
+          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python saude.py
+
+      # Responde o que o Luiz perguntou no Telegram. Fica aqui para funcionar
+      # mesmo com o Mac desligado — o preço é a resposta levar até 1 hora.
+      # Com o Mac ligado, o bot local (launchd) responde em segundos.
+      - name: Responder perguntas do Telegram
+        continue-on-error: true
+        env:
+          POSTADOR_MOTOR: ${{ github.workspace }}/_motor_compartilhado
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          META_USER_TOKEN: ${{ secrets.META_USER_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bot.py
+
+      - name: Publicar
+        env:
+          POSTADOR_MOTOR: ${{ github.workspace }}/_motor_compartilhado
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          META_USER_TOKEN: ${{ secrets.META_USER_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          MIDIA_BASE_URL: ${{ secrets.MIDIA_BASE_URL }}
+          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python publicar.py \
+            ${{ inputs.simular && '--simular' || '' }} \
+            ${{ inputs.forcar && format('--forcar {0}', inputs.forcar) || '' }}
+
+      # O registro do que já foi publicado precisa sobreviver entre execuções,
+      # senão o mesmo post sairia de novo na próxima hora.
+      - name: Guardar registro de publicados
+        if: ${{ !inputs.simular }}
+        run: |
+          if [[ -n "$(git status --porcelain posts/publicados.json)" ]]; then
+            git config user.name  'arcoreal-bot'
+            git config user.email 'bot@arcoreal.local'
+            git add posts/publicados.json
+            git commit -m "registro: posts publicados em $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
