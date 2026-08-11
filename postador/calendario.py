@@ -186,6 +186,18 @@ def montar_html(por_dia) -> str:
   --apr-f:#d9e8f8; --apr-t:#1a5590;
   --pen-f:#fbeacd; --pen-t:#8a5a0b;
 }}
+/* Azul profundo: fundo claro e frio, quadrados em azul-marinho fechado.
+   O tema "azul" tinha fundo escuro TAMBÉM azul, e o quadrado sumia dentro
+   dele. Aqui o contraste é o assunto: papel claro, dia bem escuro. */
+[data-tema="profundo"]{{
+  --fundo:#eef2f7; --papel:#12233d; --vazio:#e2e8f1; --borda:#c6d2e2;
+  --texto:#16202e; --fraco:#5c6b7f; --hoje:#1f6fb8;
+  --pub-f:#17543a; --pub-t:#9fecc5;
+  --apr-f:#1d4a7d; --apr-t:#b8daff;
+  --pen-f:#7a4f0e; --pen-t:#ffdb9c;
+}}
+[data-tema="profundo"] .n{{color:#93a9c6}}
+[data-tema="profundo"] td.vazio .n{{color:#77869b}}
 [data-tema="azul"]{{
   --fundo:#0a1420; --papel:#122236; --vazio:#0e1a29; --borda:#1e3550;
   --texto:#e3edf8; --fraco:#7f9ab5; --hoje:#4fb0e8;
@@ -243,6 +255,7 @@ td.hoje .n{{color:var(--hoje)}}
   <button data-t="claro">claro</button>
   <button data-t="escuro">escuro</button>
   <button data-t="azul">azul</button>
+  <button data-t="profundo">azul profundo</button>
  </div>
 </div>
 {"".join(blocos)}
