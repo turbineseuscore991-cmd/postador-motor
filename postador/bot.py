@@ -41,7 +41,26 @@ except ImportError:
 
 BRT = timezone(timedelta(hours=-3))
 POSTS = RAIZ / "posts"
-MARCA = POSTS / ".bot_offset"          # último recado já respondido
+# Estado de execução vai para ~/Library/Application Support, FORA do projeto.
+#
+# Ficava em posts/.bot_offset — dentro de ~/Documents, que no Mac do Luiz é
+# sincronizado pelo iCloud. Processo iniciado pelo launchd, fora da sessão
+# gráfica, falha ao escrever ali com "Errno 11 Resource deadlock avoided", e o
+# bot morria logo depois de receber a pergunta. Além disso, isto é estado de
+# máquina: não pertence ao repositório nem precisa de backup.
+import marca  # noqa: E402
+
+ESTADO = Path.home() / "Library" / "Application Support" / "postador" / marca.CHAVE
+ESTADO.mkdir(parents=True, exist_ok=True)
+MARCA = ESTADO / "bot_offset"          # último recado já respondido
+
+# migra o antigo, para não reprocessar recados velhos
+_antigo = POSTS / ".bot_offset"
+if _antigo.exists() and not MARCA.exists():
+    try:
+        MARCA.write_text(_antigo.read_text())
+    except Exception:
+        pass
 
 
 def _api(metodo, _timeout_http=40, **params):

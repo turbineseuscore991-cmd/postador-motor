@@ -23,9 +23,20 @@ from .projeto import raiz
 RAIZ = raiz()
 sys.path.insert(0, str(RAIZ))
 
-from . import bot  # noqa: E402
+from . import bot, recebedor  # noqa: E402
 
-PY = RAIZ / ".venv" / "bin" / "python"
+# O Python que está rodando ISTO, não um caminho fixo.
+#
+# Antes era RAIZ/.venv/bin/python — e esse caminho vive dentro de ~/Documents,
+# que no Mac do Luiz é sincronizado pelo iCloud. Quando o launchd inicia o
+# vigia fora da sessão gráfica, ler o pyvenv.cfg por ali falha com
+# "OSError: [Errno 11] Resource deadlock avoided" ANTES de rodar uma linha de
+# código nosso. O agente morria calado e o bot do Telegram passava dias
+# respondendo só pela nuvem, de hora em hora.
+#
+# Ambiente Python não deve morar em pasta sincronizada. O do Arco Real foi
+# para ~/.venvs/arcoreal.
+PY = Path(sys.executable)
 DOWNLOADS = Path.home() / "Downloads"
 import marca   # do cliente
 
@@ -49,6 +60,34 @@ def recolher() -> bool:
                 print(f'  {linha.strip()}')
         return True
     return False
+
+
+def receber_do_painel(dados: dict) -> int:
+    """Grava a decisão que o painel mandou pela portinha, sem passar por arquivo.
+
+    Escreve direto em posts/aprovado.json e chama o aprovar.py só para enviar
+    ao GitHub — assim a regra de junção continua num lugar só.
+    """
+    import json
+    fila = RAIZ / "posts" / "aprovado.json"
+    atual = {}
+    if fila.exists():
+        atual = json.loads(fila.read_text(encoding="utf-8"))
+    atual.setdefault("posts", {})
+
+    chegando = dados.get("posts", dados)
+    mudou = [pid for pid, d in chegando.items() if atual["posts"].get(pid) != d]
+    atual["posts"].update(chegando)
+    fila.write_text(json.dumps(atual, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+
+    if mudou:
+        print(f'  📥 painel: {len(mudou)} decisão(ões) — {", ".join(mudou[:6])}',
+              flush=True)
+        # aprovar.py sem arquivo em Downloads só faz o envio ao GitHub
+        subprocess.run([str(PY), "aprovar.py"], cwd=RAIZ,
+                       capture_output=True, text=True, timeout=300)
+    return len(mudou)
 
 
 # O log vai para ~/Library/Logs, que é o lugar do macOS para isso.
@@ -185,6 +224,8 @@ def main():
     aparar_log()
     print(f"👀 Vigiando {DOWNLOADS} e escutando o Telegram (Ctrl+C para parar)",
           flush=True)
+    # a portinha do painel: aprovação chega direto, sem baixar arquivo
+    recebedor.servir(receber_do_painel)
     try:
         while True:
             if tem_novidade():
