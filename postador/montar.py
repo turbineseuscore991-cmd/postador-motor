@@ -38,6 +38,11 @@ SAIDA = RAIZ / "posts"
 IMAGENS = SAIDA / "imagens"
 MASTERS = SAIDA / "masters4k"   # arquivo grande para reels, impressão e reuso
 
+# As DUAS páginas que o Luiz abre ficam juntas, longe do resto. `posts/` tem
+# doze arquivos de trabalho do robô e ele se perdia procurando as duas que
+# interessam.
+PASTA_PAINEL = RAIZ / "Painel"   # PAINEL já é o template HTML lá embaixo
+
 DIAS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
 
 
@@ -175,8 +180,9 @@ def main():
 
     html = montar_painel(fila)
     conferir_js(html)          # nunca gravar um painel que não roda
-    (SAIDA / "aprovacao.html").write_text(html, encoding="utf-8")
-    print(f"\n✅ {len(fila)} posts → posts/aprovacao.html")
+    PASTA_PAINEL.mkdir(exist_ok=True)
+    (PASTA_PAINEL / "aprovar.html").write_text(html, encoding="utf-8")
+    print(f"\n✅ {len(fila)} posts → Painel/aprovar.html")
 
     # Sobe as artes NA HORA, sem depender de alguém lembrar do hospedar.py.
     # A Meta não recebe arquivo: ela BAIXA do endereço público. Arte renderizada
