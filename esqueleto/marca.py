@@ -24,6 +24,18 @@ NOME_OFICIAL = "Nome Completo da Instituição"
 # Sem isto, o publicador tenta as duas e falha em quem não tem conta.
 REDES = ("instagram", "facebook")
 
+# ------------------------------------------------------------------- cores
+# As duas cores da arte. Sem declarar, cai no ouro do Arco Real — e a arte
+# sai bonita com a cor do cliente errado, que ninguém percebe até publicar.
+#
+#   COR         moldura da foto, títulos, régua sob o cabeçalho
+#   COR_CLARA   a barra estreita ao lado do texto da faixa inferior
+#
+# Ver renderizado antes de fixar: a segunda cor muda o caráter da arte mais
+# do que parece no código.
+COR = (222, 178, 72)         # ⚠️ TROCAR
+COR_CLARA = (243, 208, 118)  # ⚠️ TROCAR
+
 # --------------------------------------------------------------------- pastas
 PASTA_FOTOS = "Fotos"                # onde ficam as fotos deste cliente
 

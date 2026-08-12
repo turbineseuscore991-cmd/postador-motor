@@ -42,9 +42,20 @@ LOGO_PADRAO = RAIZ / "assets" / "img" / "logo_0.png"
 
 FORMATOS = {"4x5": (1080, 1350), "1x1": (1080, 1080), "9x16": (1080, 1920)}
 
-# Ouro mais saturado que o original (#d4af5a lavava contra fundo claro)
-OURO = (222, 178, 72)
-OURO_CLARO = (243, 208, 118)
+# As DUAS cores da arte, lidas do cliente.
+#
+#   COR         moldura da foto, títulos, régua sob o cabeçalho
+#   COR_CLARA   a barra estreita ao lado do texto da faixa inferior
+#
+# Eram constantes globais aqui — ouro do Arco Real gravado no motor. Trocar
+# para outro cliente exigiria mexer no motor e mudaria o Arco Real junto.
+# Agora cada `marca.py` traz o seu par; sem declarar, cai no ouro de sempre,
+# então nada muda para quem já roda.
+#
+# O ouro é mais saturado que o original: #d4af5a lavava contra fundo claro,
+# e foi reclamação do Luiz.
+OURO = getattr(marca, "COR", (222, 178, 72))
+OURO_CLARO = getattr(marca, "COR_CLARA", (243, 208, 118))
 ESCALA_PADRAO = 3
 
 
