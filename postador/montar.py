@@ -46,9 +46,25 @@ PASTA_PAINEL = RAIZ / "Painel"   # PAINEL já é o template HTML lá embaixo
 DIAS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
 
 
+def _estilo_industrial():
+    """O cliente pediu outro estilo? `marca.ESTILO = "industrial"`.
+
+    Sem isso, arte de cliente técnico sai com serifa capitular e moldura
+    ornamentada — o vocabulário do Arco Real, que é de irmandade.
+    """
+    return getattr(marca, "ESTILO", "classico") == "industrial"
+
+
 def renderizar_slide(post, i, slide) -> Path:
     """Um slide do carrossel: pNN_0.jpg, pNN_1.jpg…"""
     destino = IMAGENS / f'{post["id"]}_{i}.jpg'
+    if _estilo_industrial() and slide["foto"] != plano.CARD:
+        from . import industrial
+        return industrial.gerar(
+            FOTOS / slide["foto"], destino,
+            etiqueta=slide.get("etiqueta"), titulo=slide.get("titulo"),
+            lower=slide.get("lower"),
+            cortar_topo=slide.get("cortar_topo", 0.0))
     if slide["foto"] == plano.CARD:
         return render.gerar_card(destino, slide["texto"], slide["titulo"],
                                  chamada=f"{marca.ARROBA} · {marca.LOCAL}", aspas=False,

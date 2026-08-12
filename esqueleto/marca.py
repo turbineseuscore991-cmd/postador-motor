@@ -24,6 +24,16 @@ NOME_OFICIAL = "Nome Completo da Instituição"
 # Sem isto, o publicador tenta as duas e falha em quem não tem conta.
 REDES = ("instagram", "facebook")
 
+# ------------------------------------------------------------------- estilo
+# "classico"    serifa capitular, moldura, logo pequeno centralizado.
+#               Cerimonial — nasceu para o Arco Real
+# "industrial"  foto sangrando até a borda, logo grande à esquerda,
+#               sans-serif pesado, etiqueta de canto. Vocabulário de laudo
+#
+# Escolher pelo LEITOR, não pelo gosto: gerente de fábrica lê serifa como
+# convite de casamento.
+ESTILO = "classico"
+
 # ------------------------------------------------------------------- cores
 # As duas cores da arte. Sem declarar, cai no ouro do Arco Real — e a arte
 # sai bonita com a cor do cliente errado, que ninguém percebe até publicar.

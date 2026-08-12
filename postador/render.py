@@ -132,7 +132,21 @@ def _interp(paradas, t):
     return paradas[-1][1]
 
 
-FUNDO = [(0.00, (12, 19, 48)), (0.55, (10, 10, 24)), (1.00, (5, 5, 12))]
+# O degradê de fundo e o da faixa inferior também são do CLIENTE.
+#
+# Parametrizei só COR e COR_CLARA na primeira passada, e o resultado foi uma
+# arte da Lastrom com título verde sobre o azul-marinho e o carmesim do Arco
+# Real: metade de cada marca. Cor de traço não basta — o fundo é o que dá o
+# caráter da peça.
+FUNDO = getattr(marca, "FUNDO", [
+    (0.00, (12, 19, 48)), (0.55, (10, 10, 24)), (1.00, (5, 5, 12))])
+
+# A faixa que carrega o nome do Capítulo, com transparência no fim de cada cor.
+FAIXA = getattr(marca, "FAIXA", [
+    (0.00, (22, 34, 88, 247)),
+    (0.52, (100, 20, 60, 240)),
+    (1.00, (168, 22, 52, 224)),
+])
 
 
 def _degrade_diagonal(w, h, paradas):
@@ -301,11 +315,7 @@ def _lower(tela, nome, cargo, alt_pct=13, margem_pct=4, margem_baixo=None):
     bw = W - mx * 2
     x, y = mx, round(H - barH - (margem_baixo if margem_baixo is not None else mx))
 
-    faixa = _degrade_horizontal(bw, barH, [
-        (0.00, (22, 34, 88, 247)),
-        (0.52, (100, 20, 60, 240)),
-        (1.00, (168, 22, 52, 224)),
-    ])
+    faixa = _degrade_horizontal(bw, barH, FAIXA)
     faixa.putalpha(Image.composite(faixa.getchannel("A"),
                                    Image.new("L", (bw, barH), 0),
                                    _mascara(bw, barH, round(W * 0.012))))
