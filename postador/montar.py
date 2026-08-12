@@ -58,6 +58,18 @@ def _estilo_industrial():
 def renderizar_slide(post, i, slide) -> Path:
     """Um slide do carrossel: pNN_0.jpg, pNN_1.jpg…"""
     destino = IMAGENS / f'{post["id"]}_{i}.jpg'
+
+    # Arte já finalizada fora daqui entra INTACTA — nada é desenhado por cima.
+    # Sem isto, peça pronta feita à mão receberia logo e título de novo,
+    # duplicados. O arquivo fica em entrada/artes/.
+    if slide.get("pronto"):
+        origem = ENTRADA / "artes" / slide["pronto"]
+        if not origem.exists():
+            raise SystemExit(f'arte pronta não achada: {origem}')
+        shutil.copy2(origem, destino)
+        print(f'  ✓ arte pronta: {slide["pronto"]}')
+        return destino
+
     if _estilo_industrial() and slide["foto"] != plano.CARD:
         from . import industrial
         return industrial.gerar(
