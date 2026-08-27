@@ -453,7 +453,11 @@ def gerar_card(saida, versiculo, referencia, chamada=None, formato="4x5",
     _logo(tela, caminho_logo, 17, "tc")
     abaixo = W * 0.045 + _altura_logo(caminho_logo, W, 17)
 
-    tela.texto_espacado((W / 2, abaixo + W * 0.078), "SAGRADO ARCO REAL",
+    # Era "SAGRADO ARCO REAL" fixo aqui dentro. Card de OUTRO cliente saía com
+    # o nome do Arco Real impresso na arte — aconteceu com dois posts da
+    # Lastrom. `marca.NOME` do Arco Real é "Sagrado Arco Real", então em
+    # maiúsculas dá exatamente o mesmo texto: nada muda para quem já roda.
+    tela.texto_espacado((W / 2, abaixo + W * 0.078), marca.NOME.upper(),
                         cinzel(W * 0.038), OURO, W * 0.007)
     regua = abaixo + W * 0.106
     tela.d.rectangle((W / 2 - W * 0.07, regua,

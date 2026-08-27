@@ -70,13 +70,20 @@ def renderizar_slide(post, i, slide) -> Path:
         print(f'  ✓ arte pronta: {slide["pronto"]}')
         return destino
 
-    if _estilo_industrial() and slide["foto"] != plano.CARD:
+    if _estilo_industrial():
         from . import industrial
+        # Card sem foto: o do motor é de versículo (serifa, aspas, régua) e
+        # sairia como convite de casamento no meio de um feed de laudo.
+        if slide["foto"] == plano.CARD:
+            return industrial.gerar_card(
+                destino, slide["texto"], etiqueta=slide.get("etiqueta"),
+                lower=slide.get("lower"))
         return industrial.gerar(
             FOTOS / slide["foto"], destino,
             etiqueta=slide.get("etiqueta"), titulo=slide.get("titulo"),
             lower=slide.get("lower"),
-            cortar_topo=slide.get("cortar_topo", 0.0))
+            cortar_topo=slide.get("cortar_topo", 0.0),
+            cortar_rodape=slide.get("cortar_rodape", 0.0))
     if slide["foto"] == plano.CARD:
         return render.gerar_card(destino, slide["texto"], slide["titulo"],
                                  chamada=f"{marca.ARROBA} · {marca.LOCAL}", aspas=False,
@@ -141,6 +148,25 @@ def renderizar(post: dict) -> Path:
             capa = capa_do_video(RAIZ / post["video"], destino)
             if capa:
                 return capa
+
+    # O estilo do cliente vale para post ÚNICO também, não só para carrossel.
+    # Esta checagem só existia em `renderizar_slide()`: os posts de foto única
+    # da Lastrom saíam com serifa capitular, moldura e faixa carmesim do Arco
+    # Real, e os cards saíam com "SAGRADO ARCO REAL" escrito na arte. Ninguém
+    # viu porque os dois primeiros posts dela eram carrossel.
+    if _estilo_industrial():
+        from . import industrial
+        if post["tipo"] == "card":
+            return industrial.gerar_card(
+                destino, post["texto"], etiqueta=post.get("etiqueta"),
+                lower=post.get("lower"))
+        if post["tipo"] == "foto":
+            return industrial.gerar(
+                FOTOS / post["foto"], destino,
+                etiqueta=post.get("etiqueta"), titulo=post.get("titulo"),
+                lower=post.get("lower"),
+                cortar_topo=post.get("cortar_topo", 0.0),
+                cortar_rodape=post.get("cortar_rodape", 0.0))
 
     if post["tipo"] in ("card", "reel"):
         # card sem versículo usa a citação do Ritual; sem nenhum dos dois,
