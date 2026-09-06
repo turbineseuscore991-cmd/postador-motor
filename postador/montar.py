@@ -396,7 +396,12 @@ def montar_painel(fila: list) -> str:
     chips = [f'<span class="chip">{ic} {contas[t]} {txt}</span>'
              for t, ic, txt in rotulos if contas[t]]
     chips.append('<span class="chip">🚫 nenhuma data citada</span>')
-    periodo = (f'{fila[0]["quando_br"].split(" às")[0][:5]} a '
+    # Plano vazio é estado LEGÍTIMO, não erro: acontece toda vez que um lote
+    # termina e o próximo ainda não foi escrito, e aconteceu na Lastrom em
+    # 27/08, quando os nove primeiros posts saíram à mão e o plano foi
+    # esvaziado. Sem esta guarda, `fila[0]` estoura e o painel inteiro morre.
+    periodo = ("nenhum post no plano" if not fila else
+               f'{fila[0]["quando_br"].split(" às")[0][:5]} a '
                f'{fila[-1]["quando_br"].split(" às")[0][:5]}')
     return (PAINEL.replace("{{CARTOES}}", "\n".join(cartoes))
                   .replace("{{CHIPS}}", "\n    ".join(chips))

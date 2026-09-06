@@ -67,6 +67,44 @@ def ja_publicados() -> dict:
     return carregar(REGISTRO, {})
 
 
+_cache_no_ar = {}
+
+
+def no_ar_agora(legenda: str) -> str | None:
+    """Esta legenda JÁ está publicada na conta? Devolve o link, ou None.
+
+    O `publicados.json` é registro local e desencontra: em 04/09/2026 ele
+    tinha 15 posts enquanto a conta tinha 21. Seis posts publicados à mão
+    constavam como pendentes, e um `--forcar` republicou o p16 — que estava
+    no ar desde 22/08. O Instagram NÃO tem endpoint de exclusão, então o
+    duplicado teve de ser apagado a dedo, no aplicativo.
+
+    Registro local mente; a conta é a verdade. Por isso a conferência final
+    é feita CONTRA A CONTA, na hora, e não contra o arquivo.
+
+    Falha de rede não bloqueia a publicação: sem resposta, devolve None e o
+    fluxo segue — perder um post por instabilidade de rede é pior do que o
+    risco que esta função cobre.
+    """
+    try:
+        from . import historico
+        alvo = historico.impressao(legenda)
+    except Exception:
+        return None
+    if not _cache_no_ar:
+        try:
+            for item in meta_api.ig_listar_publicados(limite=100):
+                from . import historico
+                _cache_no_ar[historico.impressao(item.get("caption") or "")] = \
+                    item.get("permalink", "")
+        except Exception as e:
+            log.warning("[IG] não consegui conferir a conta antes de publicar "
+                        "(%s) — seguindo assim mesmo", str(e)[:80])
+            _cache_no_ar["__falhou__"] = ""
+            return None
+    return _cache_no_ar.get(alvo)
+
+
 def marcar(post_id, resultado):
     reg = ja_publicados()
     reg[post_id] = dict(resultado, em=datetime.now(BRT).isoformat())
@@ -272,8 +310,30 @@ def com_urls(enderecos, acao):
     raise ultimo
 
 
+class PublicacaoParcial(Exception):
+    """Uma rede publicou, a outra não.
+
+    Antes isto não existia: o Instagram publicava, o Facebook levantava erro
+    logo depois, a exceção subia e `marcar()` nunca era chamado. O post ficava
+    NO AR e AUSENTE do registro — e na próxima passada era publicado de novo.
+    Foi assim que o `publicados.json` acumulou seis posts de diferença em
+    relação à conta, até um `--forcar` republicar o p16 em 04/09/2026.
+
+    Carrega o que DEU CERTO, para o chamador registrar antes de alertar.
+    """
+    def __init__(self, resultado, falhas):
+        self.resultado = resultado
+        self.falhas = falhas
+        super().__init__("; ".join(f"{r}: {e}" for r, e in falhas.items()))
+
+
 def publicar_post(post, legenda, simular=False):
     tipo = post["tipo"]
+    if "imagem" not in post:
+        raise MetaErroDeConfig(
+            f'{post["id"]}: sem o campo "imagem" no posts/plano.json. Rodar '
+            f'`plano.py` sozinho reescreve esse arquivo SEM os campos que o '
+            f'`montar.py` acrescenta. Rode: python montar.py')
     imagem = RAIZ / post["imagem"]
 
     if tipo == "reel":
@@ -308,6 +368,16 @@ def publicar_post(post, legenda, simular=False):
     redes = getattr(marca, "REDES", ("instagram", "facebook"))
     no_ig, no_fb = "instagram" in redes, "facebook" in redes
 
+    # Cada rede é independente. Uma cair não pode apagar o sucesso da outra.
+    falhas = {}
+
+    def tentar(rede, fn):
+        try:
+            resultado[rede] = fn()
+        except Exception as e:
+            falhas[rede] = str(e)[:200]
+            log.error("[%s] falhou: %s", rede, str(e)[:150])
+
     if tipo == "carrossel":
         # cada slide pode ter vários endereços; escolhe o que a Meta aceitar
         urls = []
@@ -315,24 +385,25 @@ def publicar_post(post, legenda, simular=False):
             cands = url_publica(RAIZ / "posts" / "imagens" / f'{post["id"]}_{i}.jpg')
             urls.append(com_urls(cands, lambda u: meta_api.ig_validar_imagem(u)))
         if no_ig:
-            resultado["instagram"] = meta_api.ig_publicar_carrossel(urls, legenda)
+            tentar("instagram", lambda: meta_api.ig_publicar_carrossel(urls, legenda))
         if no_fb:
-            resultado["facebook"] = meta_api.fb_publicar_foto(urls[0], legenda)
+            tentar("facebook", lambda: meta_api.fb_publicar_foto(urls[0], legenda))
 
     elif tipo == "reel":
         url_video = primeira(url_publica(RAIZ / post["video"]))
         url_capa = primeira(url_publica(imagem))
         if no_ig:
-            resultado["instagram"] = meta_api.ig_publicar_reel(
-                url_video, legenda, url_capa)
+            tentar("instagram",
+                   lambda: meta_api.ig_publicar_reel(url_video, legenda, url_capa))
         if no_fb:
-            resultado["facebook"] = meta_api.fb_publicar_video(url_video, legenda)
+            tentar("facebook",
+                   lambda: meta_api.fb_publicar_video(url_video, legenda))
 
     else:  # foto e card
         url = url_publica(imagem)
         if no_ig:
-            resultado["instagram"] = com_urls(
-                url, lambda u: meta_api.ig_publicar_imagem(u, legenda))
+            tentar("instagram", lambda: com_urls(
+                url, lambda u: meta_api.ig_publicar_imagem(u, legenda)))
         url = primeira(url)
         if no_fb:
             # o Facebook aceita agendamento nativo se a hora ainda não chegou
@@ -340,12 +411,17 @@ def publicar_post(post, legenda, simular=False):
             agora = datetime.now(BRT)
             if quando > agora + timedelta(minutes=15):
                 agenda = quando.timestamp()
-            resultado["facebook"] = meta_api.fb_publicar_foto(url, legenda, agenda)
+            tentar("facebook",
+                   lambda: meta_api.fb_publicar_foto(url, legenda, agenda))
 
-    if not resultado:
+    if not resultado and not falhas:
         raise MetaErroDeConfig(
             f'marca.REDES = {redes} não tem rede nenhuma reconhecida. '
             'Use ("instagram",), ("facebook",) ou as duas.')
+    if falhas and not resultado:
+        raise MetaErro(next(iter(falhas.values())))
+    if falhas:
+        raise PublicacaoParcial(resultado, falhas)
     return resultado
 
 
@@ -386,6 +462,22 @@ def rodar(simular=False, forcar=None):
     for post in pendentes:
         pid = post["id"]
         legenda = decisoes.get(pid, {}).get("legenda") or post["legenda"]
+
+        # Última conferência, CONTRA A CONTA. Vale também para --forcar: foi
+        # justamente um --forcar, confiando num registro local desatualizado,
+        # que republicou o p16 em 04/09/2026. Instagram não apaga por API.
+        if not simular:
+            link = no_ar_agora(legenda)
+            if link:
+                log.warning("🚫 %s NÃO publicado: esta legenda já está no ar "
+                            "em %s", pid, link)
+                marcar(pid, {"instagram": "—", "permalink": link,
+                             "nota": "já estava no ar; registro local corrigido"})
+                avisar(f'🚫 <b>{pid}</b> não publicado — já estava no ar\n'
+                       f'{link}\n\nO registro local estava desatualizado e '
+                       f'acabo de corrigi-lo.')
+                continue
+
         try:
             resultado = publicar_post(post, legenda, simular)
             if not simular:
@@ -400,6 +492,23 @@ def rodar(simular=False, forcar=None):
                        f'IG: <code>{resultado.get("instagram","—")}</code>\n'
                        f'FB: <code>{resultado.get("facebook","—")}</code>')
             log.info("✅ %s publicado: %s", pid, resultado)
+        except PublicacaoParcial as e:
+            # REGISTRA PRIMEIRO. O que subiu, subiu — e post no ar fora do
+            # registro é o que gera duplicata na passada seguinte.
+            if not simular:
+                marcar(pid, dict(e.resultado, parcial=list(e.falhas)))
+                limpar_falhas(pid)
+                from . import historico
+                historico.registrar(post, legenda, agora.strftime("%d/%m/%Y"))
+            ok = ", ".join(f"{r}: {v}" for r, v in e.resultado.items())
+            log.warning("⚠️ %s publicado em parte — OK em [%s]; falhou em %s",
+                        pid, ok, list(e.falhas))
+            avisar(f'⚠️ <b>{pid}</b> saiu só em parte\n'
+                   f'✅ {ok}\n'
+                   f'❌ {", ".join(e.falhas)}\n\n'
+                   f'<code>{str(e)[:250]}</code>\n\n'
+                   f'Já registrei o que subiu — não vai repetir.')
+            continue
         except ReelSemVideo as e:
             log.info("⏳ %s", e)
             # Esperar calado só vale ANTES da hora marcada. Depois dela, o

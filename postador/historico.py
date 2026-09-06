@@ -20,7 +20,8 @@ from .projeto import raiz
 RAIZ = raiz()
 ARQUIVO = RAIZ / "posts" / "historico.json"
 
-VAZIO = {"versiculos": {}, "fotos": {}, "fundos": {}, "legendas": {}}
+VAZIO = {"versiculos": {}, "fotos": {}, "fotos_sha": {}, "fundos": {},
+         "legendas": {}}
 
 
 def carregar() -> dict:
@@ -46,6 +47,21 @@ def impressao(texto: str) -> str:
     return hashlib.sha1(" ".join(limpo.split()).encode()).hexdigest()[:16]
 
 
+def _sha_foto(nome: str) -> str:
+    """Impressão digital do CONTEÚDO da foto.
+
+    Nome de arquivo mente: `resultado peça pronta.png` era byte a byte a
+    mesma imagem de `vaso-depois.png`, já publicada, e a memória por nome
+    deixou passar. Duas cópias do mesmo arquivo com nomes diferentes é o
+    normal quando as fotos chegam de WhatsApp, câmera e pasta do cliente.
+    """
+    import marca
+    arq = RAIZ / getattr(marca, "PASTA_FOTOS", "Fotos") / nome
+    if not arq.exists():
+        return ""
+    return hashlib.sha256(arq.read_bytes()).hexdigest()[:24]
+
+
 def registrar(post: dict, legenda: str, quando: str) -> None:
     """Chamado quando o post realmente foi publicado."""
     d = carregar()
@@ -55,13 +71,17 @@ def registrar(post: dict, legenda: str, quando: str) -> None:
     ref = (post.get("versiculo") or [None])[0]
     if ref:
         d["versiculos"].setdefault(ref, marca)
-    foto = post.get("foto", "")
-    if foto and not foto.startswith("__"):
-        d["fotos"].setdefault(foto, marca)
+    def guardar_foto(f):
+        if not f or f.startswith("__"):
+            return
+        d["fotos"].setdefault(f, marca)
+        sha = _sha_foto(f)
+        if sha:
+            d["fotos_sha"].setdefault(sha, f"{marca} · {f}")
+
+    guardar_foto(post.get("foto", ""))
     for slide in post.get("carrossel", []) or []:
-        f = slide.get("foto", "") if isinstance(slide, dict) else slide
-        if f and not f.startswith("__"):
-            d["fotos"].setdefault(f, marca)
+        guardar_foto(slide.get("foto", "") if isinstance(slide, dict) else slide)
     if post.get("fundo"):
         d["fundos"].setdefault(post["fundo"], marca)
     d["legendas"].setdefault(impressao(legenda), marca)
@@ -86,10 +106,18 @@ def conferir(plano_posts, legenda_de) -> list:
         ref = (p.get("versiculo") or [None])[0]
         if ref and ref in d["versiculos"] and alheio(d["versiculos"][ref], pid):
             choques.append(f'{pid}: versículo {ref} já usado em {d["versiculos"][ref]}')
-        foto = p.get("foto", "")
-        if (foto and not foto.startswith("__") and foto in d["fotos"]
-                and alheio(d["fotos"][foto], pid)):
-            choques.append(f'{pid}: foto já usada em {d["fotos"][foto]}')
+        for foto in ([p.get("foto", "")] +
+                     [(s.get("foto", "") if isinstance(s, dict) else s)
+                      for s in (p.get("carrossel") or [])]):
+            if not foto or foto.startswith("__"):
+                continue
+            if foto in d["fotos"] and alheio(d["fotos"][foto], pid):
+                choques.append(f'{pid}: foto já usada em {d["fotos"][foto]}')
+                continue
+            sha = _sha_foto(foto)
+            if sha and sha in d["fotos_sha"] and alheio(d["fotos_sha"][sha], pid):
+                choques.append(f'{pid}: {foto} é a MESMA IMAGEM já usada em '
+                               f'{d["fotos_sha"][sha]}')
         h = impressao(legenda_de(p))
         if h in d["legendas"] and alheio(d["legendas"][h], pid):
             choques.append(f'{pid}: legenda equivalente já usada em {d["legendas"][h]}')

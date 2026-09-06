@@ -92,8 +92,40 @@ def _token():
         "developers.facebook.com/tools/explorer e rode: python configurar_meta.py")
 
 
-def _chamar(metodo, caminho, **params):
-    params["access_token"] = _token()
+def _token_ig():
+    """O Instagram NÃO precisa do token de Página.
+
+    Em 04/09/2026 o app do Arco Real perdeu as permissões `pages_*` — o token
+    de usuário continuava válido, mas `/me/accounts` passou a devolver zero
+    páginas, então o token de Página não podia mais ser derivado. Como toda
+    chamada passava por `_token()`, o Instagram caiu junto com o Facebook,
+    sem precisar: a conta `arcorealoficial` seguia perfeitamente alcançável
+    pelo token de usuário.
+
+    O sintoma que chegou ao Luiz foi "a API está desativada pela Meta". Não
+    estava. Era permissão faltando de um lado só.
+    """
+    if "ig" in _cache_token:
+        return _cache_token["ig"]
+    try:
+        t = _token()
+        _cache_token["ig"] = t
+        return t
+    except MetaErro:
+        pass
+    usuario = os.getenv("META_USER_TOKEN", "").strip()
+    if usuario and _valido(usuario):
+        log.warning("[Meta] sem token de Página — Instagram segue pelo token "
+                    "de usuário. O Facebook fica fora até reautorizar.")
+        _cache_token["ig"] = usuario
+        return usuario
+    raise MetaErro(
+        "nem o token de Página nem o de usuário respondem. Refaça em "
+        "developers.facebook.com/tools/explorer e rode: python configurar_meta.py")
+
+
+def _chamar(metodo, caminho, _tok=None, **params):
+    params["access_token"] = _tok or _token()
     url = f"{BASE}/{caminho.lstrip('/')}"
     r = requests.request(metodo, url, data=params if metodo == "POST" else None,
                          params=None if metodo == "POST" else params, timeout=TIMEOUT)
@@ -119,12 +151,12 @@ def _ig_id():
     return v
 
 
-def _esperar_container(creation_id, tentativas=40, intervalo=15):
+def _esperar_container(creation_id, tentativas=40, intervalo=15, _tok=None):
     """Publicar antes do container ficar pronto devolve
     "Media ID is not available" (código 9007). Vale para FOTO também, não só
     vídeo: a foto costuma levar poucos segundos, mas leva."""
     for n in range(tentativas):
-        info = _chamar("GET", creation_id, fields="status_code,status")
+        info = _chamar("GET", creation_id, _tok=_tok, fields="status_code,status")
         estado = info.get("status_code")
         if estado == "FINISHED":
             return
@@ -136,32 +168,59 @@ def _esperar_container(creation_id, tentativas=40, intervalo=15):
 
 
 def ig_publicar_imagem(image_url, legenda):
-    c = _chamar("POST", f"{_ig_id()}/media", image_url=image_url, caption=legenda)
-    _esperar_container(c["id"], tentativas=20, intervalo=3)
-    return _chamar("POST", f"{_ig_id()}/media_publish", creation_id=c["id"])["id"]
+    t = _token_ig()
+    c = _chamar("POST", f"{_ig_id()}/media", _tok=t,
+                image_url=image_url, caption=legenda)
+    _esperar_container(c["id"], tentativas=20, intervalo=3, _tok=t)
+    return _chamar("POST", f"{_ig_id()}/media_publish", _tok=t,
+                   creation_id=c["id"])["id"]
 
 
 def ig_publicar_carrossel(urls, legenda):
     if not 2 <= len(urls) <= 10:
         raise MetaErro(f"carrossel aceita de 2 a 10 imagens, recebi {len(urls)}")
+    t = _token_ig()
     filhos = []
     for u in urls:
-        f = _chamar("POST", f"{_ig_id()}/media",
+        f = _chamar("POST", f"{_ig_id()}/media", _tok=t,
                     image_url=u, is_carousel_item="true")["id"]
-        _esperar_container(f, tentativas=20, intervalo=3)
+        _esperar_container(f, tentativas=20, intervalo=3, _tok=t)
         filhos.append(f)
-    pai = _chamar("POST", f"{_ig_id()}/media", media_type="CAROUSEL",
+    pai = _chamar("POST", f"{_ig_id()}/media", _tok=t, media_type="CAROUSEL",
                   children=",".join(filhos), caption=legenda)
-    _esperar_container(pai["id"], tentativas=20, intervalo=3)
-    return _chamar("POST", f"{_ig_id()}/media_publish", creation_id=pai["id"])["id"]
+    _esperar_container(pai["id"], tentativas=20, intervalo=3, _tok=t)
+    return _chamar("POST", f"{_ig_id()}/media_publish", _tok=t,
+                   creation_id=pai["id"])["id"]
 
 
 def ig_publicar_reel(video_url, legenda, capa_url=None):
+    t = _token_ig()
     extra = {"cover_url": capa_url} if capa_url else {}
-    c = _chamar("POST", f"{_ig_id()}/media", media_type="REELS",
+    c = _chamar("POST", f"{_ig_id()}/media", _tok=t, media_type="REELS",
                 video_url=video_url, caption=legenda, **extra)
-    _esperar_container(c["id"])
-    return _chamar("POST", f"{_ig_id()}/media_publish", creation_id=c["id"])["id"]
+    _esperar_container(c["id"], _tok=t)
+    return _chamar("POST", f"{_ig_id()}/media_publish", _tok=t,
+                   creation_id=c["id"])["id"]
+
+
+def ig_listar_publicados(limite=100):
+    """O que REALMENTE está no ar na conta, do mais novo para o mais antigo.
+
+    Serve à conferência anti-duplicata do `publicar.py`: o registro local é
+    um arquivo e desencontra da realidade; a conta, não. Paginado, porque a
+    Meta devolve no máximo 50 por página.
+    """
+    t = _token_ig()
+    itens, caminho = [], f"{_ig_id()}/media"
+    params = {"fields": "id,timestamp,permalink,caption", "limit": 50}
+    while caminho and len(itens) < limite:
+        r = _chamar("GET", caminho, _tok=t, **params)
+        itens += r.get("data", [])
+        proxima = (r.get("paging") or {}).get("cursors", {}).get("after")
+        if not proxima or not r.get("data"):
+            break
+        params = dict(params, after=proxima)
+    return itens[:limite]
 
 
 # ---------------------------------------------------------------------------
