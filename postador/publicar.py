@@ -188,7 +188,13 @@ def url_publica(caminho: Path):
 
     Pode devolver uma lista de endereços equivalentes; use `com_urls()` para
     tentar cada um até a Meta aceitar."""
-    base = os.getenv("MIDIA_BASE_URL", "").strip()
+    # O endereço vinha SÓ da variável de ambiente, enquanto o `hospedar.py`
+    # lia de `marca.BASE_MIDIA`. Dois lugares para a mesma informação: a
+    # Lastrom hospedou certinho e o publicador disse "a foto não sobe",
+    # porque o `.env` recém-criado não tinha a variável. Agora o marca.py é
+    # a queda natural — ele está no repositório e vale também no robô.
+    base = (os.getenv("MIDIA_BASE_URL", "").strip()
+            or str(getattr(marca, "BASE_MIDIA", "")).strip())
     if base:
         return f'{base.rstrip("/")}/{caminho.name}'
 

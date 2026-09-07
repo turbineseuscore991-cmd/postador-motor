@@ -46,6 +46,11 @@ PASTA_PAINEL = RAIZ / "Painel"   # PAINEL já é o template HTML lá embaixo
 DIAS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
 
 
+def _estilo():
+    """Qual estilo este cliente usa: classico, industrial ou charuto."""
+    return getattr(marca, "ESTILO", "classico")
+
+
 def _estilo_industrial():
     """O cliente pediu outro estilo? `marca.ESTILO = "industrial"`.
 
@@ -69,6 +74,18 @@ def renderizar_slide(post, i, slide) -> Path:
         shutil.copy2(origem, destino)
         print(f'  ✓ arte pronta: {slide["pronto"]}')
         return destino
+
+    if _estilo() == "charuto":
+        from . import charuto
+        if slide["foto"] == plano.CARD:
+            return charuto.gerar_card(destino, slide["texto"],
+                                      etiqueta=slide.get("etiqueta"),
+                                      lower=slide.get("lower"))
+        return charuto.gerar(
+            FOTOS / slide["foto"], destino, titulo=slide.get("titulo"),
+            lower=slide.get("lower"), etiqueta=slide.get("etiqueta"),
+            cortar_topo=slide.get("cortar_topo", 0.0),
+            cortar_rodape=slide.get("cortar_rodape", 0.0))
 
     if _estilo_industrial():
         from . import industrial
@@ -130,6 +147,19 @@ def capa_do_video(video: Path, destino: Path, quando=None):
 def renderizar(post: dict) -> Path:
     destino = IMAGENS / f'{post["id"]}.jpg'
     mestre = MASTERS / f'{post["id"]}.jpg'
+
+    # Arte pronta em post ÚNICO. A checagem só existia em `renderizar_slide`,
+    # então `pronto` funcionava em carrossel e explodia em post de uma foto
+    # só — o motor ia procurar um arquivo chamado "__card__" na pasta de
+    # fotos. Foto já finalizada entra INTACTA, nada é desenhado por cima.
+    if post.get("pronto"):
+        origem = ENTRADA / "artes" / post["pronto"]
+        if not origem.exists():
+            raise SystemExit(f'arte pronta não achada: {origem}')
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(origem, destino)
+        print(f'  ✓ arte pronta: {post["pronto"]}')
+        return destino
     tema = plano.FUNDOS.get(post["id"])
     fundo = bancos.escolher(tema) if tema else None
 
@@ -154,6 +184,19 @@ def renderizar(post: dict) -> Path:
     # da Lastrom saíam com serifa capitular, moldura e faixa carmesim do Arco
     # Real, e os cards saíam com "SAGRADO ARCO REAL" escrito na arte. Ninguém
     # viu porque os dois primeiros posts dela eram carrossel.
+    if _estilo() == "charuto":
+        from . import charuto
+        if post["tipo"] == "card":
+            return charuto.gerar_card(destino, post["texto"],
+                                      etiqueta=post.get("etiqueta"),
+                                      lower=post.get("lower"))
+        if post["tipo"] == "foto":
+            return charuto.gerar(
+                FOTOS / post["foto"], destino, titulo=post.get("titulo"),
+                lower=post.get("lower"), etiqueta=post.get("etiqueta"),
+                cortar_topo=post.get("cortar_topo", 0.0),
+                cortar_rodape=post.get("cortar_rodape", 0.0))
+
     if _estilo_industrial():
         from . import industrial
         if post["tipo"] == "card":

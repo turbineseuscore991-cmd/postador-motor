@@ -29,6 +29,8 @@ try:
 except ImportError:
     pass
 
+import marca  # noqa: E402   (do cliente; depende do sys.path acima)
+
 BRT = timezone(timedelta(hours=-3))
 
 
@@ -61,7 +63,13 @@ def conferir() -> tuple[list, list]:
         problemas.append(f'❌ <b>Meta fora do ar</b>\n<code>{str(e)[:180]}</code>')
 
     # 2) A hospedagem de imagem funciona?
-    if os.getenv("IMGBB_API_KEY", "").strip() or os.getenv("MIDIA_BASE_URL", "").strip():
+    # Mesma queda do publicador: `marca.BASE_MIDIA` vale tanto quanto a
+    # variável. Sem isto o diagnóstico acusava "a foto não sobe" num cliente
+    # cuja hospedagem estava funcionando — e diagnóstico que mente sobre um
+    # problema faz procurar defeito onde não tem.
+    if (os.getenv("IMGBB_API_KEY", "").strip()
+            or os.getenv("MIDIA_BASE_URL", "").strip()
+            or str(getattr(marca, "BASE_MIDIA", "")).strip()):
         infos.append("✅ Hospedagem de imagem configurada")
     else:
         problemas.append("❌ Sem IMGBB_API_KEY nem MIDIA_BASE_URL — a foto não sobe")

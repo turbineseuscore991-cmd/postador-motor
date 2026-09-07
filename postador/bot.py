@@ -133,10 +133,23 @@ def resp_status():
         linhas += ["", f'<b>Próximo:</b> POST {p["n"]:02d} · {p["tipo"]}',
                    f'{p["quando"]:%d/%m às %Hh} — {marca}']
 
-    if falhas:
+    # Post que já está NO AR não é problema, por mais que tenha falhado no
+    # caminho. O n01 publicou no Instagram, o Facebook derrubou depois, e o
+    # registro de falha ficou — o status então avisava "com problema" sobre
+    # um post publicado, todo dia, sem nada a fazer a respeito. Alarme que
+    # não se pode atender é alarme que se aprende a ignorar.
+    publicados = set(_ler("publicados.json", {}))
+    pendentes = {k: v for k, v in falhas.items()
+                 if k.split("#")[0] not in publicados}
+    resolvidas = len(falhas) - len(pendentes)
+
+    if pendentes:
         linhas += ["", "🛑 <b>Com problema:</b>"]
-        for pid, v in falhas.items():
+        for pid, v in pendentes.items():
             linhas.append(f'{pid}: {v["vezes"]}x — {v["erro"][:70]}')
+    if resolvidas:
+        linhas.append(f'\n🧹 {resolvidas} falha(s) antiga(s) de post já publicado '
+                      f'— ignoradas')
 
     try:
         from . import meta_api

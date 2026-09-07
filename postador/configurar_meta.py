@@ -37,10 +37,31 @@ except ImportError:
 VERSAO = os.getenv("GRAPH_VERSION", "v25.0")
 BASE = f"https://graph.facebook.com/{VERSAO}"
 
-PERMISSOES = [
-    "pages_show_list", "pages_read_engagement", "pages_manage_posts",
-    "instagram_basic", "instagram_content_publish",
-]
+# O que cada rede exige. Separado de propósito: a lista era única e cobrava
+# `pages_manage_posts` de todo mundo, inclusive de cliente que publica só no
+# Instagram e nunca vai tocar na Página. O aviso assustava sem motivo — e
+# aviso que se aprende a ignorar é pior que aviso nenhum.
+PERM_BASE = ["pages_show_list", "pages_read_engagement"]
+PERM_INSTAGRAM = ["instagram_basic", "instagram_content_publish"]
+PERM_FACEBOOK = ["pages_manage_posts"]
+
+
+def _permissoes_exigidas():
+    """Só o que ESTE cliente precisa, conforme `marca.REDES`."""
+    try:
+        import marca
+        redes = getattr(marca, "REDES", ("instagram", "facebook"))
+    except Exception:
+        redes = ("instagram", "facebook")
+    lista = list(PERM_BASE)
+    if "instagram" in redes:
+        lista += PERM_INSTAGRAM
+    if "facebook" in redes:
+        lista += PERM_FACEBOOK
+    return lista
+
+
+PERMISSOES = PERM_BASE + PERM_INSTAGRAM + PERM_FACEBOOK
 
 
 def api(caminho, token, **params):
@@ -66,16 +87,50 @@ def gravar_env(pares):
 
 
 def gh_secret(chave, valor):
+    """Grava um Secret no repositório desta pasta. Devolve (ok, motivo).
+
+    ⚠️ `gh secret set` SAI COM CÓDIGO 0 MESMO QUANDO FALHA. Numa pasta que
+    não é repositório git ele imprime "failed to run git: fatal: not a git
+    repository" na saída de erro e devolve 0 — e o script dizia "✅ Secrets
+    cadastrados" para uma gravação que não aconteceu. Foi o que ocorreu com
+    a Lastrom em 07/09/2026: o token nunca chegou ao GitHub, e só se
+    descobriria no dia em que o robô não publicasse.
+    """
     try:
-        subprocess.run(["gh", "secret", "set", chave, "-b", valor],
-                       check=True, capture_output=True, timeout=60)
-        return True
-    except Exception:
-        return False
+        r = subprocess.run(["gh", "secret", "set", chave, "-b", valor],
+                           capture_output=True, timeout=60, text=True)
+        erro = (r.stderr or "").strip()
+        if r.returncode != 0 or "failed" in erro.lower() or "error" in erro.lower():
+            return False, erro.splitlines()[0][:120] if erro else "código != 0"
+        return True, ""
+    except Exception as e:
+        return False, str(e)[:120]
 
 
-# App criado no navegador junto com o Luiz. É público (não é segredo).
+# ⚠️ Este é o app do ARCO REAL, e ficava aqui como padrão fixo — o que
+# fazia todo cliente novo tentar esticar o token com o app errado, e o erro
+# só aparecia como "Não consegui esticar o token" sem dizer por quê.
+#
+# Agora cada cliente declara o seu em `marca.APP_ID`, ou o script pergunta.
+# Não é segredo: o ID do app é público, quem não pode vazar é a chave.
 APP_ID_PADRAO = "1026038863477791"
+
+
+def _app_id():
+    """De onde vem o ID do app, na ordem: .env, marca.py, pergunta."""
+    v = os.getenv("META_APP_ID", "").strip()
+    if v:
+        return v
+    try:
+        import marca
+        v = str(getattr(marca, "APP_ID", "")).strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    print("\n   O ID do app está em App settings → Basic, no topo.")
+    v = input("   ID do app (Enter usa o do Arco Real): ").strip()
+    return v or APP_ID_PADRAO
 
 
 def trocar_por_longo(token_curto, app_id, app_secret):
@@ -98,7 +153,7 @@ def main():
     print("Cole o token que apareceu no Graph API Explorer (o curto, de 1h).")
     print("Ele não aparece enquanto você digita — cole e dê Enter.\n")
     # o App Secret pode já estar salvo no .env (via chave.py); senão, pergunta
-    app_id = os.getenv("META_APP_ID", "").strip() or APP_ID_PADRAO
+    app_id = _app_id()
     app_secret = os.getenv("META_APP_SECRET", "").strip()
     try:
         token = getpass.getpass("Cole o TOKEN do Explorer: ").strip()
@@ -121,7 +176,12 @@ def main():
                          params={"input_token": token, "access_token": token},
                          timeout=40).json().get("data", {})
     escopos = debug.get("scopes", [])
-    faltando = [p for p in PERMISSOES if p not in escopos]
+    exigidas = _permissoes_exigidas()
+    faltando = [p for p in exigidas if p not in escopos]
+    extras = [p for p in PERMISSOES if p not in exigidas and p not in escopos]
+    if extras:
+        print(f'   (não pedi {", ".join(extras)}: este cliente não publica '
+              f'nessa rede)')
     if faltando:
         print(f'\n⚠️  Faltam permissões: {", ".join(faltando)}')
         print("   Volte no Graph API Explorer, marque essas e gere de novo.\n")
@@ -147,7 +207,10 @@ def main():
     else:
         for i, p in enumerate(paginas, 1):
             print(f'   {i}. {p["name"]}  ({p["id"]})')
-        pagina = paginas[int(input("\nQual é a do Arco Real? ").strip()) - 1]
+        import marca as _m
+        _nome = getattr(_m, "NOME", "o cliente")
+        pagina = paginas[int(input(f"\nQual é a d{'a' if _nome[-1] in 'aA' else 'o'} "
+                                   f"{_nome}? ").strip()) - 1]
     print(f'   ✓ {pagina["name"]} — {pagina["id"]}')
 
     # o token específico da Página é o que publica
@@ -177,12 +240,18 @@ def main():
     print("\n✅ Gravado no .env (token de página + de usuário, para recuperação)")
 
     if input("Cadastrar nos Secrets do GitHub também? [S/n] ").lower() != "n":
-        ok = all([gh_secret("META_TOKEN", token_pagina),
-                  gh_secret("META_USER_TOKEN", token),
-                  gh_secret("IG_USER_ID", conta["id"]),
-                  gh_secret("FB_PAGE_ID", pagina["id"])])
-        print("✅ Secrets cadastrados" if ok else
-              "⚠️  Falhou — rode 'gh auth login' e tente de novo")
+        resultados = [gh_secret("META_TOKEN", token_pagina),
+                      gh_secret("META_USER_TOKEN", token),
+                      gh_secret("IG_USER_ID", conta["id"]),
+                      gh_secret("FB_PAGE_ID", pagina["id"])]
+        falhas = [m for ok, m in resultados if not ok]
+        if not falhas:
+            print("✅ Secrets cadastrados")
+        else:
+            print(f"⚠️  NÃO cadastrei os Secrets: {falhas[0]}")
+            print("   O token está no .env e funciona aqui na sua máquina,")
+            print("   mas o robô do GitHub NÃO vai conseguir publicar.")
+            print("   Esta pasta precisa ser um repositório com remoto no GitHub.")
 
     print("\n🎉 Pronto. Agora confirme com:")
     print("   ./.venv/bin/python publicar.py --conferir")
