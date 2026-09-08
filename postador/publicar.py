@@ -442,6 +442,7 @@ def rodar(simular=False, forcar=None):
     agora = datetime.now(BRT)
 
     pendentes = []
+    perdidos = []
     for post in fila:
         pid = post["id"]
         if pid in feitos:
@@ -453,6 +454,22 @@ def rodar(simular=False, forcar=None):
         decisao = decisoes.get(pid, {})
         if decisao.get("decisao") != "aprovado":
             continue
+
+        # POST QUE PERDEU A JANELA. Antes ele simplesmente não entrava na
+        # lista e o robô dizia "Nada a publicar agora" — nenhum erro, nenhum
+        # aviso, e o Luiz só descobria olhando o perfil no fim do dia.
+        #
+        # Aconteceu em 07/09/2026 com os DOIS clientes de uma vez: o GitHub
+        # não executou nenhum cron entre 7h e 9h, e quando executou ao
+        # meio-dia os posts das 7h já estavam 5 horas velhos. Silêncio dos
+        # dois lados.
+        #
+        # Não publico atrasado por conta própria: post de 7h saindo às 20h é
+        # pior que não sair, e o Luiz já reclamou disso. Aviso e ele decide.
+        quando_p = datetime.strptime(post["quando"], "%Y-%m-%d %H:%M").replace(tzinfo=BRT)
+        if agora > quando_p + ATRASO_TOLERADO:
+            perdidos.append((post, quando_p))
+            continue
         if desistiu(pid):
             log.info("%s: já falhou %d vezes, não vou insistir. Conserte e rode "
                      "com --forcar.", pid, MAX_TENTATIVAS)
@@ -461,8 +478,35 @@ def rodar(simular=False, forcar=None):
         if quando - ADIANTAMENTO <= agora <= quando + ATRASO_TOLERADO:
             pendentes.append(post)
 
+    # Avisa UMA vez por post perdido. A chave leva "#perdeu" para o contador
+    # não se misturar com falhas reais — três falhas reais fazem o post
+    # desistir, e perder a janela não é culpa dele.
+    for post, quando_p in perdidos:
+        pid = post["id"]
+        atraso = int((agora - quando_p).total_seconds() // 60)
+        _, avisar_agora = registrar_falha(f"{pid}#perdeu",
+                                          f"janela fechada, {atraso} min")
+        log.warning("⏰ %s PERDEU A JANELA — marcado para %s, agora são %s "
+                    "(%d min de atraso)", pid, post["quando"],
+                    agora.strftime("%d/%m %H:%M"), atraso)
+        if avisar_agora and not simular:
+            horas = atraso // 60
+            avisar(f'⏰ <b>{pid}</b> não saiu\n'
+                   f'{post.get("dia_semana","")} {post.get("quando_br", post["quando"])}\n\n'
+                   f'Passou <b>{horas}h{atraso % 60:02d}</b> da hora marcada e a '
+                   f'janela de tolerância fechou.\n\n'
+                   f'Quase sempre é o cron do GitHub, que às vezes pula horas '
+                   f'inteiras.\n\n'
+                   f'Para publicar agora:\n'
+                   f'<code>python publicar.py --forcar {pid}</code>\n'
+                   f'Ou remarque no plano.py para outro dia.')
+
     if not pendentes:
-        log.info("Nada a publicar agora (%s).", agora.strftime("%d/%m %H:%M"))
+        if perdidos:
+            log.info("Nada dentro da janela — mas %d post(s) perderam a hora.",
+                     len(perdidos))
+        else:
+            log.info("Nada a publicar agora (%s).", agora.strftime("%d/%m %H:%M"))
         return
 
     for post in pendentes:

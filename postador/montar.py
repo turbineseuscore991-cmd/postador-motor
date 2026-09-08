@@ -453,7 +453,15 @@ def montar_painel(fila: list) -> str:
                   .replace("{{NOME}}", marca.NOME)
                   .replace("{{ARROBA}}", marca.ARROBA)
                   .replace("{{CHAVE}}", marca.CHAVE)
-                  .replace("{{REGRAS}}", marca.REGRAS)
+                  # As regras do cliente entram DENTRO de um texto JavaScript
+                  # delimitado por crase. Uma crase no meio delas fecha a
+                  # string e quebra o painel inteiro — aconteceu em 07/09/2026,
+                  # quando escrevi `Fotos Lastrom/` numa regra da Lastrom e o
+                  # painel parou de gerar com "Unexpected identifier 'Fotos'".
+                  # Escapar aqui é mais seguro que confiar em quem escreve.
+                  .replace("{{REGRAS}}", marca.REGRAS.replace("\\", "\\\\")
+                                                     .replace("`", "\\`")
+                                                     .replace("${", "\\${"))
                   .replace("{{NOME_OFICIAL}}", marca.NOME_OFICIAL))
 
 
