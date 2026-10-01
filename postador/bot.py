@@ -118,7 +118,7 @@ def resp_status():
     prox = [x for x in f if x["futuro"] and not x["publicado"]]
     falhas = _ler("falhas.json", {})
 
-    linhas = ["📊 <b>Arco Real — status</b>", ""]
+    linhas = [f"📊 <b>{marca.NOME} — status</b>", ""]
     linhas.append(f'✅ {len(pub)} já publicados')
     linhas.append(f'📅 {len(prox)} programados')
     aprovados = sum(1 for x in prox if x["aprovado"])
@@ -129,9 +129,9 @@ def resp_status():
 
     if prox:
         p = prox[0]
-        marca = "✅" if p["aprovado"] else "⚠️ falta aprovar"
+        selo = "✅" if p["aprovado"] else "⚠️ falta aprovar"
         linhas += ["", f'<b>Próximo:</b> POST {p["n"]:02d} · {p["tipo"]}',
-                   f'{p["quando"]:%d/%m às %Hh} — {marca}']
+                   f'{p["quando"]:%d/%m às %Hh} — {selo}']
 
     # Post que já está NO AR não é problema, por mais que tenha falhado no
     # caminho. O n01 publicou no Instagram, o Facebook derrubou depois, e o
@@ -168,10 +168,10 @@ def resp_proximo():
     if not prox:
         return "Nenhum post programado à frente. Me avise que eu monto mais."
     p = prox[0]
-    marca = ("✅ aprovado, vai sair sozinho" if p["aprovado"]
-             else "⚠️ ainda NÃO aprovado — abra o painel")
+    selo = ("✅ aprovado, vai sair sozinho" if p["aprovado"]
+            else "⚠️ ainda NÃO aprovado — abra o painel")
     return (f'📅 <b>POST {p["n"]:02d}</b> · {p["tipo"]}\n'
-            f'{p["quando"]:%A, %d/%m às %Hh}\n{marca}\n\n'
+            f'{p["quando"]:%A, %d/%m às %Hh}\n{selo}\n\n'
             f'<i>{p["legenda"][:600]}</i>')
 
 
@@ -197,7 +197,7 @@ def resp_saude():
 
 
 def resp_ajuda():
-    return ("🔺 <b>Pode me perguntar:</b>\n\n"
+    return (f"🤖 <b>{marca.NOME} — pode me perguntar:</b>\n\n"
             "<b>status</b> — resumo geral\n"
             "<b>proximo</b> — o próximo post com a legenda\n"
             "<b>fila</b> — lista do que vem\n"

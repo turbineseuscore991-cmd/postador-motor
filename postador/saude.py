@@ -142,12 +142,12 @@ def main():
                      .replace("<code>", "").replace("</code>", ""))
 
     if problemas:
-        avisar("🔧 <b>Arco Real — atenção</b>\n\n" + "\n\n".join(problemas)
+        avisar(f"🔧 <b>{marca.NOME} — atenção</b>\n\n" + "\n\n".join(problemas)
                + "\n\n<i>Corrija antes do próximo horário de post.</i>")
         print("\n📲 Avisei no Telegram.")
         return 1
     if a.sempre:
-        avisar("✅ <b>Arco Real — tudo em ordem</b>\n\n" + "\n".join(infos))
+        avisar(f"✅ <b>{marca.NOME} — tudo em ordem</b>\n\n" + "\n".join(infos))
         print("\n📲 Avisei no Telegram.")
     else:
         print("\n✅ Nada a reportar.")
