@@ -484,12 +484,24 @@ def rodar(simular=False, forcar=None):
     for post, quando_p in perdidos:
         pid = post["id"]
         atraso = int((agora - quando_p).total_seconds() // 60)
-        _, avisar_agora = registrar_falha(f"{pid}#perdeu",
-                                          f"janela fechada, {atraso} min")
+        # A MENSAGEM GUARDADA PRECISA SER ESTÁVEL. Ela era
+        # f"janela fechada, {atraso} min" — e o atraso cresce a cada hora.
+        # `registrar_falha` compara a mensagem para saber se é o mesmo erro;
+        # com o número dentro, nunca era, o contador voltava a 1 e o alerta
+        # saía A CADA EXECUÇÃO. O Luiz recebeu dezenas por post.
+        #
+        # O atraso continua aparecendo na mensagem do Telegram, onde serve.
+        # Aqui fica só o motivo, que não muda.
+        _, avisar_agora = registrar_falha(f"{pid}#perdeu", "janela fechada")
         log.warning("⏰ %s PERDEU A JANELA — marcado para %s, agora são %s "
                     "(%d min de atraso)", pid, post["quando"],
                     agora.strftime("%d/%m %H:%M"), atraso)
-        if avisar_agora and not simular:
+        # Só o PRIMEIRO aviso. `registrar_falha` também avisaria na última
+        # tentativa, o que faz sentido para erro de publicação — mas perder a
+        # janela não é algo que se resolva tentando de novo: o post já está
+        # velho. Um aviso basta; o resto é ruído.
+        if avisar_agora and _falhas().get(f"{pid}#perdeu", {}).get("vezes", 0) == 1 \
+                and not simular:
             horas = atraso // 60
             avisar(f'⏰ <b>{pid}</b> não saiu\n'
                    f'{post.get("dia_semana","")} {post.get("quando_br", post["quando"])}\n\n'
