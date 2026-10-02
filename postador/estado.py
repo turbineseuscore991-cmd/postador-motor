@@ -115,8 +115,11 @@ def publicar_estado() -> bool:
             return True
         destino.write_text(novo, encoding="utf-8")
         hospedar._git("add", "estado.json")
-        hospedar._git("-c", "user.name=Luiz Silva",
-                      "-c", "user.email=turbineseuscore991@gmail.com",
+        # Quem escreve isto e o robo, nao o Luiz. Assinar com o nome dele
+        # faz o historico do repositorio de midia mentir sobre quem agiu —
+        # e e justamente onde se vai olhar quando algo sair errado.
+        hospedar._git("-c", f"user.name={marca.CHAVE}-bot",
+                      "-c", "user.email=bot@enjoystudios.local",
                       "commit", "-q", "-m", "estado: resumo para o bot central")
         r = hospedar.empurrar()
         if r.returncode:
