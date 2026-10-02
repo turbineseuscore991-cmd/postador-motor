@@ -49,10 +49,15 @@ POSTS = RAIZ / "posts"
 # bot morria logo depois de receber a pergunta. Além disso, isto é estado de
 # máquina: não pertence ao repositório nem precisa de backup.
 import marca  # noqa: E402
+from . import clientes  # noqa: E402
 
 ESTADO = Path.home() / "Library" / "Application Support" / "postador" / marca.CHAVE
 ESTADO.mkdir(parents=True, exist_ok=True)
-MARCA = ESTADO / "bot_offset"          # último recado já respondido
+MARCA = ESTADO / "bot_offset"
+
+# %A sai no idioma do sistema — no runner do GitHub, inglês.
+DIAS = ["segunda", "terça", "quarta", "quinta", "sexta",
+        "sábado", "domingo"]          # último recado já respondido
 
 # migra o antigo, para não reprocessar recados velhos
 _antigo = POSTS / ".bot_offset"
@@ -171,7 +176,7 @@ def resp_proximo():
     selo = ("✅ aprovado, vai sair sozinho" if p["aprovado"]
             else "⚠️ ainda NÃO aprovado — abra o painel")
     return (f'📅 <b>POST {p["n"]:02d}</b> · {p["tipo"]}\n'
-            f'{p["quando"]:%A, %d/%m às %Hh}\n{selo}\n\n'
+            f'{DIAS[p["quando"].weekday()]}, {p["quando"]:%d/%m às %Hh}\n{selo}\n\n'
             f'<i>{p["legenda"][:600]}</i>')
 
 
@@ -197,12 +202,109 @@ def resp_saude():
 
 
 def resp_ajuda():
-    return (f"🤖 <b>{marca.NOME} — pode me perguntar:</b>\n\n"
-            "<b>status</b> — resumo geral\n"
+    nomes = " · ".join(c["apelidos"][0] for c in clientes.CLIENTES)
+    return ("🤖 <b>Pode me perguntar:</b>\n\n"
+            "<b>status</b> — os três clientes de uma vez\n"
+            f"<b>status &lt;cliente&gt;</b> — só um: {nomes}\n"
             "<b>proximo</b> — o próximo post com a legenda\n"
             "<b>fila</b> — lista do que vem\n"
             "<b>saude</b> — checagem completa\n\n"
-            "Escreva em português normal, eu entendo.")
+            "Escreva em português normal, eu entendo. "
+            "<i>\"e o rui?\", \"como tá o charuto?\" funcionam.</i>")
+
+
+# ---------------------------------------------------------------------------
+# Os outros clientes
+#
+# Este processo roda na pasta de UM cliente e só enxerga o disco dele. Para
+# responder pelos outros dois, lê o `estado.json` que cada um publica no seu
+# repositório público de mídia. Ver `clientes.py` para o porquê deste
+# caminho, e não da API do GitHub.
+# ---------------------------------------------------------------------------
+
+def _estado_de(cli: dict) -> dict:
+    """O retrato de um cliente: do disco se for o de casa, da web se não."""
+    if cli["chave"] == marca.CHAVE:
+        from . import estado
+        return estado.resumo()
+    r = requests.get(f'{cli["base"]}/estado.json', timeout=25,
+                     headers={"Cache-Control": "no-cache"})
+    r.raise_for_status()
+    return r.json()
+
+
+def _linha_curta(d: dict) -> str:
+    """Uma linha por cliente, para o panorama dos três."""
+    prox = d.get("proximo")
+    if not prox:
+        fim = "⚠️ fila vazia"
+    else:
+        dia = prox["quando"][8:10] + "/" + prox["quando"][5:7]
+        hora = prox["quando"][11:16]
+        fim = (f'{prox["id"]} em {dia} {hora}'
+               + ("" if prox.get("aprovado") else " ⚠️ sem aprovação"))
+    alerta = ""
+    if not d.get("meta", {}).get("ok", True):
+        alerta = "  🛑 Meta fora"
+    elif d.get("problemas"):
+        alerta = f'  🛑 {len(d["problemas"])} problema(s)'
+    return f'<b>{d["cliente"]}</b>\n  {d.get("adiante", 0)} na fila · {fim}{alerta}'
+
+
+def resp_todos() -> str:
+    blocos = ["📊 <b>Os três clientes</b>"]
+    for cli in clientes.CLIENTES:
+        try:
+            blocos.append(_linha_curta(_estado_de(cli)))
+        except Exception as e:
+            blocos.append(f'<b>{cli["nome"]}</b>\n  ❓ não consegui ler: '
+                          f'{str(e)[:70]}')
+    blocos.append('<i>Pergunte pelo nome para ver um só: "status bodes".</i>')
+    return "\n\n".join(blocos)
+
+
+def resp_remoto(cli: dict) -> str:
+    """Detalhe de um cliente que não é o de casa."""
+    try:
+        d = _estado_de(cli)
+    except Exception as e:
+        return (f'❓ Não consegui ler o estado d{"a" if cli["nome"][-1] in "aA" else "o"} '
+                f'<b>{cli["nome"]}</b>: {str(e)[:110]}\n\n'
+                f'<i>O resumo é publicado a cada rodada. Se o robô dele não '
+                f'roda há muito tempo, o arquivo some do ar.</i>')
+
+    linhas = [f'📊 <b>{d["cliente"]}</b>', ""]
+    linhas.append(f'✅ {d.get("publicados", 0)} já publicados')
+    linhas.append(f'📅 {d.get("adiante", 0)} programados')
+    linhas.append(f'👍 {d.get("aprovados", 0)} deles aprovados e prontos')
+    falta = d.get("adiante", 0) - d.get("aprovados", 0)
+    if falta > 0:
+        linhas.append(f'⚠️ {falta} <b>sem aprovação</b> — não vão sair')
+
+    prox = d.get("proximo")
+    if prox:
+        selo = "✅" if prox.get("aprovado") else "⚠️ falta aprovar"
+        dia, hora = prox["quando"][:10], prox["quando"][11:16]
+        linhas += ["", f'<b>Próximo:</b> {prox["id"]} · {prox.get("tipo","?")}',
+                   f'{dia[8:]}/{dia[5:7]} às {hora} — {selo}']
+
+    if d.get("atrasados"):
+        linhas += ["", f'⏰ <b>perderam a hora:</b> {", ".join(d["atrasados"])}']
+    if d.get("problemas"):
+        linhas += ["", "🛑 <b>Com problema:</b>"]
+        for p in d["problemas"]:
+            linhas.append(f'{p["post"]}: {p["vezes"]}x — {p["erro"][:70]}')
+
+    m = d.get("meta", {})
+    if m.get("ok"):
+        linhas += ["", f'🔗 @{m.get("username")} — {m.get("seguidores")} seguidores, '
+                       f'{m.get("posts_no_ar")} posts']
+    else:
+        linhas += ["", f'❌ <b>Meta fora:</b> {str(m.get("erro"))[:110]}']
+
+    linhas += ["", f'<i>resumo de {d.get("atualizado", "?")} — '
+                   f'a legenda só o robô dele vê</i>']
+    return "\n".join(linhas)
 
 
 def entender(texto: str) -> str:
@@ -212,6 +314,17 @@ def entender(texto: str) -> str:
 
     if tem("ajuda", "help", "comando", "o que voce faz", "o que vc faz"):
         return resp_ajuda()
+
+    # QUAL CLIENTE. Esta checagem vem antes de tudo porque o Luiz usa um só
+    # bot para os três e pergunta pelo nome. Sem ela, "status lastrom" era
+    # respondido com os números de quem rodasse primeiro.
+    alvo = clientes.qual(t)
+    if alvo and alvo["chave"] != marca.CHAVE:
+        return resp_remoto(alvo)
+    if not alvo and tem("status", "resumo", "geral", "todos",
+                        "como estao", "como estão"):
+        return resp_todos()
+
     if tem("saude", "saúde", "tudo ok", "tudo bem", "funcionando", "checa", "check"):
         return resp_saude()
     if tem("proximo", "próximo", "prox", "qual o post", "que post"):
@@ -220,7 +333,7 @@ def entender(texto: str) -> str:
         return resp_fila()
     if tem("status", "como esta", "como está", "resumo", "situacao", "situação"):
         return resp_status()
-    return resp_status() + "\n\n<i>(mande \"ajuda\" para ver o que pergunto)</i>"
+    return resp_todos() + "\n\n<i>(mande \"ajuda\" para ver o que pergunto)</i>"
 
 
 # ---------------------------------------------------------------------------
