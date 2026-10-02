@@ -35,16 +35,58 @@ def _git(*args, cwd=ESPELHO, **kw):
 
 
 def preparar():
-    """Garante um clone local do repositório de mídia."""
+    """Garante um clone local do repositório de mídia.
+
+    No Mac usa o `gh`, que já está autenticado. No runner do GitHub o `gh`
+    não serve: o token do workflow só vale no PRÓPRIO repositório, e o de
+    mídia é outro. Por isso, se existir `MIDIA_TOKEN` no ambiente, clona
+    por HTTPS com ele.
+
+    O token NUNCA entra no `remote` gravado em disco — ia parar no
+    `.git/config` do espelho, que fica em /tmp e sobrevive entre execuções.
+    Ele é passado só no momento do comando.
+    """
+    import os
+    token = os.getenv("MIDIA_TOKEN", "").strip()
+
     if (ESPELHO / ".git").exists():
-        _git("pull", "-q", "--rebase")
+        if token:
+            _git("pull", "-q", "--rebase", _url(token), "HEAD")
+        else:
+            _git("pull", "-q", "--rebase")
         return
+
     ESPELHO.parent.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(ESPELHO, ignore_errors=True)
-    r = subprocess.run(["gh", "repo", "clone", REPO, str(ESPELHO)],
-                       capture_output=True, text=True, timeout=300)
+
+    if token:
+        r = subprocess.run(["git", "clone", "-q", _url(token), str(ESPELHO)],
+                           capture_output=True, text=True, timeout=300)
+    else:
+        r = subprocess.run(["gh", "repo", "clone", REPO, str(ESPELHO)],
+                           capture_output=True, text=True, timeout=300)
     if r.returncode:
-        raise SystemExit(f"não consegui clonar {REPO}: {r.stderr[:200]}")
+        # o token apareceria inteiro na mensagem de erro do git
+        erro = r.stderr[:200].replace(token, "***") if token else r.stderr[:200]
+        raise SystemExit(f"não consegui clonar {REPO}: {erro}")
+
+
+def _url(token: str) -> str:
+    return f"https://x-access-token:{token}@github.com/{REPO}.git"
+
+
+def empurrar():
+    """Envia o espelho. Com MIDIA_TOKEN quando houver, pelo remoto quando não.
+
+    Existe para que `enviar()` e `estado.publicar_estado()` empurrem do mesmo
+    jeito — eram dois `_git("push")` soltos, e só um ia lembrar do token.
+    """
+    import os
+    token = os.getenv("MIDIA_TOKEN", "").strip()
+    r = _git("push", "-q", *( [_url(token), "HEAD"] if token else [] ))
+    if r.returncode and token:
+        r.stderr = r.stderr.replace(token, "***")
+    return r
 
 
 def _fontes():
@@ -77,7 +119,7 @@ def enviar() -> int:
     _git("add", "-A")
     _git("-c", "user.name=Luiz Silva", "-c", "user.email=turbineseuscore991@gmail.com",
          "commit", "-q", "-m", f"artes: {novas} imagem(ns)")
-    r = _git("push", "-q")
+    r = empurrar()
     if r.returncode:
         raise SystemExit(f"falhou ao enviar: {r.stderr[:200]}")
     print(f"\n✅ {novas} imagem(ns) no ar em {BASE}/")

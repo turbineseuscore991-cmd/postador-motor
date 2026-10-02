@@ -118,7 +118,7 @@ def publicar_estado() -> bool:
         hospedar._git("-c", "user.name=Luiz Silva",
                       "-c", "user.email=turbineseuscore991@gmail.com",
                       "commit", "-q", "-m", "estado: resumo para o bot central")
-        r = hospedar._git("push", "-q")
+        r = hospedar.empurrar()
         if r.returncode:
             print(f"  ⚠️ não enviei o estado.json: {r.stderr[:120]}")
             return False
