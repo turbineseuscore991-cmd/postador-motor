@@ -233,6 +233,26 @@ def _estado_de(cli: dict) -> dict:
     return r.json()
 
 
+def _idade(d: dict) -> str:
+    """Há quanto tempo este resumo não é atualizado.
+
+    Importa porque o resumo só é reescrito quando o Luiz roda `montar.py`
+    no Mac: o runner do GitHub não tem permissão de escrita no repositório
+    de mídia, que é outro. Número velho apresentado como atual é pior que
+    número nenhum — então aqui ele vem com a idade colada.
+    """
+    try:
+        q = datetime.strptime(d["atualizado"], "%Y-%m-%d %H:%M").replace(tzinfo=BRT)
+    except Exception:
+        return ""
+    horas = (datetime.now(BRT) - q).total_seconds() / 3600
+    if horas < 18:
+        return ""
+    if horas < 48:
+        return f" ⚠️ há {int(horas)}h"
+    return f" ⚠️ há {int(horas // 24)} dias — pode estar desatualizado"
+
+
 def _linha_curta(d: dict) -> str:
     """Uma linha por cliente, para o panorama dos três."""
     prox = d.get("proximo")
@@ -248,7 +268,8 @@ def _linha_curta(d: dict) -> str:
         alerta = "  🛑 Meta fora"
     elif d.get("problemas"):
         alerta = f'  🛑 {len(d["problemas"])} problema(s)'
-    return f'<b>{d["cliente"]}</b>\n  {d.get("adiante", 0)} na fila · {fim}{alerta}'
+    return (f'<b>{d["cliente"]}</b>\n  {d.get("adiante", 0)} na fila · '
+            f'{fim}{alerta}{_idade(d)}')
 
 
 def resp_todos() -> str:
@@ -302,7 +323,7 @@ def resp_remoto(cli: dict) -> str:
     else:
         linhas += ["", f'❌ <b>Meta fora:</b> {str(m.get("erro"))[:110]}']
 
-    linhas += ["", f'<i>resumo de {d.get("atualizado", "?")} — '
+    linhas += ["", f'<i>resumo de {d.get("atualizado", "?")}{_idade(d)} — '
                    f'a legenda só o robô dele vê</i>']
     return "\n".join(linhas)
 

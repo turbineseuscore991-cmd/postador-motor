@@ -24,6 +24,23 @@ coisa ali que ainda não é pública.
 import re
 import unicodedata
 
+# REFRESCAR_ESTADO — a limitação conhecida, e como levantá-la.
+#
+# O `estado.json` só é reescrito quando o Luiz roda `montar.py` no Mac. O
+# runner do GitHub NÃO consegue: o token do workflow só vale no próprio
+# repositório, e o de mídia é outro. Medido em 01/10:
+#
+#     não consegui clonar turbineseuscore991-cmd/bodes-midia:
+#     gh: set the GH_TOKEN environment variable
+#
+# Enquanto isso, o bot cola a idade do resumo na resposta (ver `_idade` em
+# bot.py) — número velho apresentado como atual é pior que número nenhum.
+#
+# Para levantar: um token clássico (ou fine-grained) com escrita nos três
+# repositórios `*-midia`, guardado como secret `MIDIA_TOKEN` nos três
+# repositórios de bot, e `hospedar.preparar()` clonando com ele. É a única
+# peça que falta para o resumo se atualizar com o Mac desligado.
+
 # A ordem importa: é a ordem em que o resumo geral aparece no Telegram.
 CLIENTES = [
     {

@@ -124,8 +124,13 @@ def publicar_estado() -> bool:
             return False
         print(f"  ✓ estado.json no ar em {marca.BASE_MIDIA}/estado.json")
         return True
-    except Exception as e:
-        print(f"  ⚠️ não consegui publicar o estado: {str(e)[:140]}")
+    # SystemExit NÃO é subclasse de Exception, e `hospedar.preparar()` sai
+    # por SystemExit quando não consegue clonar — foi assim que este passo
+    # derrubou o workflow em 01/10 em vez de avisar e seguir.
+    except (Exception, SystemExit) as e:
+        print(f"  ⚠️ não consegui publicar o estado: {str(e)[:160]}")
+        print("     (o runner do GitHub só tem permissão no próprio "
+              "repositório; ver REFRESCAR_ESTADO em clientes.py)")
         return False
 
 
