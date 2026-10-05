@@ -40,11 +40,34 @@ BRT = timezone(timedelta(hours=-3))
 POSTS = RAIZ / "posts"
 REGISTRO = POSTS / "publicados.json"
 
-# Folga para o atraso do cron do GitHub Actions, que pode passar de 20 minutos.
-# O robô acorda de hora em hora; estas janelas garantem que nenhum horário caia
-# num vão entre dois despertares.
-ATRASO_TOLERADO = timedelta(minutes=150)
+# Folga para o atraso do cron do GitHub Actions.
+#
+# MEDIDO em 05/10/2026, com três dias de histórico: o cron pede 11 rodadas
+# por dia e o GitHub entrega 4, em horários que ele escolhe. Os vãos reais
+# entre uma rodada e a seguinte, no fim da tarde:
+#
+#     02/10   16:09 → 20:40   (4h31)
+#     03/10   14:52 → 19:48   (4h56)
+#     04/10   15:04 → 19:58   (4h54)
+#
+# Com os 150 minutos de antes, TODO post das 17h caía no vão e era
+# descartado como "perdeu a janela". Três dias sem publicar nada em conta
+# nenhuma, e o Luiz descobriu olhando o perfil.
+#
+# A regra antiga nasceu de uma reclamação verdadeira — post das 7h saindo às
+# 20h é pior que não sair. Mas ela resolvia esse caso proibindo o atraso, e
+# o custo virou silêncio. Agora o limite é duplo:
+#
+#   · até 5 horas de atraso, que cobre o vão medido com folga
+#   · e nunca fora da faixa decente do dia (6h–22h)
+#
+# Assim o post das 17h sai às 20h, que está ótimo, e o das 7h não sai às 23h.
+ATRASO_TOLERADO = timedelta(hours=5)
 ADIANTAMENTO = timedelta(minutes=20)
+
+# Nenhum post atrasado sai fora desta faixa, por mais que a tolerância
+# permita. É o que impede madrugada.
+HORA_CEDO, HORA_TARDE = 6, 22
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -464,18 +487,24 @@ def rodar(simular=False, forcar=None):
         # meio-dia os posts das 7h já estavam 5 horas velhos. Silêncio dos
         # dois lados.
         #
-        # Não publico atrasado por conta própria: post de 7h saindo às 20h é
-        # pior que não sair, e o Luiz já reclamou disso. Aviso e ele decide.
+        # Publico atrasado, até 5 horas, desde que ainda seja hora decente —
+        # ver ATRASO_TOLERADO lá em cima para a medição que mudou esta regra.
+        # Fora da faixa 6h–22h, aviso e o Luiz decide.
         quando_p = datetime.strptime(post["quando"], "%Y-%m-%d %H:%M").replace(tzinfo=BRT)
-        if agora > quando_p + ATRASO_TOLERADO:
+        tarde_demais = agora > quando_p + ATRASO_TOLERADO
+        hora_indecente = not (HORA_CEDO <= agora.hour < HORA_TARDE)
+        if tarde_demais or (agora > quando_p and hora_indecente):
             perdidos.append((post, quando_p))
             continue
         if desistiu(pid):
             log.info("%s: já falhou %d vezes, não vou insistir. Conserte e rode "
                      "com --forcar.", pid, MAX_TENTATIVAS)
             continue
-        quando = datetime.strptime(post["quando"], "%Y-%m-%d %H:%M").replace(tzinfo=BRT)
-        if quando - ADIANTAMENTO <= agora <= quando + ATRASO_TOLERADO:
+        if quando_p - ADIANTAMENTO <= agora <= quando_p + ATRASO_TOLERADO:
+            atraso = int((agora - quando_p).total_seconds() // 60)
+            if atraso > 30:
+                log.info("%s sai com %dh%02d de atraso — dentro da folga do cron.",
+                         pid, atraso // 60, atraso % 60)
             pendentes.append(post)
 
     # Avisa UMA vez por post perdido. A chave leva "#perdeu" para o contador
