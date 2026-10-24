@@ -68,7 +68,8 @@ CARTAO_PADRAO = 2.5            # s de cartão final
 CORRECOES = {
     "sereza": "Ceresa", "cereza": "Ceresa", "célez": "Ceresa", "ceresa": "Ceresa",
     "glespie": "GLESP", "glespe": "GLESP", "glesp": "GLESP", "glasp": "GLESP",
-    "aglespe": "a GLESP",
+    "aglespe": "a GLESP", "aglespie": "a GLESP",
+    "adade": "Haddad", "nuseadade": "Haddad",
 }
 
 
