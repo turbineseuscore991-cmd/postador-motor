@@ -45,8 +45,10 @@ PASSO = 0.25            # s entre amostras (4 quadros/s)
 LARGURA_AMOSTRA = 640
 JANELA = 1.0            # s por decisão
 MIN_SEGMENTO = 1.5      # s
-TROCA = 1.3             # a outra pessoa precisa mexer 30% mais a boca
-FALA = 2.5              # movimento de boca por janela abaixo disto é ruído
+TROCA = 1.5             # a outra pessoa precisa marcar 50% mais para tomar a vez
+FALA = 12.0             # marca por janela de 1 s abaixo disto é ouvinte
+                        # (quem fala marca 20 a 120; quem ouve, 3 a 17)
+PESO_ROSTO = 0.5        # quanto o movimento do rosto inteiro pesa frente à boca
 RAIO_GRUPO = 0.08       # fração da largura: rostos mais perto que isto, e de
                         # tamanho parecido, são a mesma pessoa
 PRESENCA_MINIMA = 0.15  # grupo visto em menos de 15% das amostras é ruído
@@ -166,7 +168,10 @@ def pessoas(deteccoes, quadros):
     n = max(1, len(deteccoes))
     saida = []
     for g in grupos:
-        presenca = len({t for t, _ in g["itens"]}) / n
+        por_quadro = {}
+        for t, r in g["itens"]:
+            por_quadro.setdefault(t, r)
+        presenca = len(por_quadro) / n
         if presenca < PRESENCA_MINIMA:
             continue
         med = np.median(np.array([r for _, r in g["itens"]]), axis=0)
@@ -174,13 +179,20 @@ def pessoas(deteccoes, quadros):
         mov = _movimento_na_caixa(quadros, caixa)
         saida.append({"cx": float((caixa[0] + caixa[2] / 2) / W), "caixa": caixa,
                       "boca": med[4:6], "presenca": presenca, "movimento": mov,
-                      "area": float(caixa[2] * caixa[3])})
+                      "area": float(caixa[2] * caixa[3]), "por_quadro": por_quadro})
     vivos = [p for p in saida if p["movimento"] >= PARADO]
     return vivos if vivos else saida
 
 
 def movimento_boca(quadros, faixas):
-    """(N, F): quanto a boca de cada pessoa mexeu entre a amostra e a anterior."""
+    """(N, F): quanto a boca de cada pessoa mexeu entre a amostra e a anterior.
+
+    Região FIXA (mediana do plano) em volta da boca, menos a diferença na
+    metade de cima do rosto: cabeça que balança mexe as duas, boca que fala
+    mexe só a de baixo. Testei comparar a boca alinhada quadro a quadro
+    pelos pontos do detector e foi pior: o ouvinte do meio, nítido e sem
+    barba, ganhava de quem falava.
+    """
     H, W = quadros.shape[1:]
     regioes = []
     for f in faixas:
@@ -196,6 +208,28 @@ def movimento_boca(quadros, faixas):
             d_boca = np.abs(a[boca] - b[boca]).mean() if a[boca].size else 0.0
             d_cima = np.abs(a[cima] - b[cima]).mean() if a[cima].size else 0.0
             mov[t, i] = max(0.0, d_boca - d_cima)
+    return mov
+
+
+def movimento_rosto(quadros, faixas):
+    """(N, F): quanto a caixa FIXA do rosto (com folga) de cada pessoa mudou
+    entre a amostra e a anterior.
+
+    Complementa a boca: quem fala mexe o rosto inteiro, gesticula, o corpo
+    acompanha; quem ouve fica parado por segundos. Salva o caso em que a
+    boca engana, como quem abaixa a cabeça para folhear papel e põe as
+    mãos onde a boca estava.
+    """
+    H, W = quadros.shape[1:]
+    mov = np.zeros((len(quadros), len(faixas)))
+    for i, f in enumerate(faixas):
+        x, y, w, h = f["caixa"]
+        reg = _recorte((x - w * 0.15, y - h * 0.15, w * 1.3, h * 1.4), H, W)
+        if quadros[0][reg].size == 0:
+            continue
+        a = quadros[:-1, reg[0], reg[1]].astype(np.int16)
+        b = quadros[1:, reg[0], reg[1]].astype(np.int16)
+        mov[1:, i] = np.abs(a - b).reshape(len(quadros) - 1, -1).mean(axis=1)
     return mov
 
 
@@ -246,8 +280,15 @@ def segmentos(midia, de, ate, verboso=True):
             segs = [(t0, 0.5)]
         elif len(gente) == 1 or gente[0]["area"] >= CLOSE * gente[1]["area"]:
             segs = [(t0, gente[0]["cx"])]
+        elif (b - a) * PASSO < MIN_SEGMENTO:
+            # Plano de um piscar: uma ou duas diferenças de boca não dizem
+            # nada; quem mais se mexeu no plano inteiro é quem fala.
+            segs = [(t0, max(gente, key=lambda p: p["movimento"])["cx"])]
         else:
-            mov = movimento_boca(bloco, gente)
+            # Boca manda, rosto desempata. Em cinco planos abertos rotulados
+            # do podcast, só a soma acertou todos: a boca sozinha caiu no
+            # papel folheado, o rosto sozinho caiu no ouvinte que se ajeita.
+            mov = movimento_boca(bloco, gente) + PESO_ROSTO * movimento_rosto(bloco, gente)
             segs = [(t0 + t, gente[i]["cx"]) for t, i in _decidir(mov, (b - a) * PASSO)]
         if verboso:
             print(f"→ plano {t0:6.2f}s–{b * PASSO:6.2f}s ({detectar.nome}): "
