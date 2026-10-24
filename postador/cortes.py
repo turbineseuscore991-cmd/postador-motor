@@ -246,7 +246,7 @@ def _blocos(palavras: list[dict]) -> list[list[dict]]:
                     or chars > MAX_CARACTERES_BLOCO or pausa > PAUSA_QUEBRA):
                 fecha()
         atual.append(p)
-        if p["p"][-1:] in ".!?;:" and len(atual) >= 2:
+        if p["p"][-1:] in ".!?;:":
             fecha()
     fecha()
     return blocos
@@ -260,7 +260,9 @@ def gerar_ass(palavras, de, ate, titulo=None, maiusculas=True) -> str:
     """Um evento por palavra: a frase inteira na tela, a palavra ativa em
     amarelo. Mais robusto que o karaokê `\\k`, que alguns players ignoram."""
     de, ate = segundos(de), segundos(ate)
-    dentro = [p for p in palavras if p["f"] > de and p["i"] < ate]
+    # Só palavra que COMEÇA dentro do corte: a que começou antes já está
+    # pela metade no áudio e apareceria inteira na tela.
+    dentro = [p for p in palavras if p["i"] >= de - 0.05 and p["i"] < ate]
 
     cab = f"""[Script Info]
 ScriptType: v4.00+
@@ -284,10 +286,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         eventos.append(f"Dialogue: 0,{_tempo_ass(0)},{_tempo_ass(fim_clipe)},"
                        f"Titulo,,0,0,0,,{t}")
 
-    for bloco in _blocos(dentro):
+    blocos = _blocos(dentro)
+    for n, bloco in enumerate(blocos):
+        # O bloco some 0,15 s depois da última palavra OU quando o próximo
+        # entra: dois blocos na tela ao mesmo tempo viram quatro linhas.
+        fim_bloco = bloco[-1]["f"] + 0.15
+        if n + 1 < len(blocos):
+            fim_bloco = min(fim_bloco, blocos[n + 1][0]["i"])
         for k, p in enumerate(bloco):
             ini = max(0.0, p["i"] - de)
-            fim = (bloco[k + 1]["i"] if k + 1 < len(bloco) else bloco[-1]["f"] + 0.15) - de
+            fim = (bloco[k + 1]["i"] if k + 1 < len(bloco) else fim_bloco) - de
             fim = min(fim, fim_clipe)
             if fim <= ini:
                 continue
