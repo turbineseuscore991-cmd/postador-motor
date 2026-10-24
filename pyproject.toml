@@ -9,6 +9,11 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+# Só quem recorta podcast (postador.cortes) precisa do Whisper — é pesado e
+# o robô de postagem não o usa. Instalar com:  pip install -e ".[cortes]"
+[project.optional-dependencies]
+cortes = ["faster-whisper>=1.1"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

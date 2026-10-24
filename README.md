@@ -28,6 +28,17 @@ atalhos com os nomes de sempre:
 | a lógica de validação | as regras da marca |
 | o vigia e o bot do Telegram | os segredos (.env) |
 
+## Cortes de podcast
+
+`postador.cortes` transforma um trecho de vídeo longo em reel 9:16 com legenda
+palavra a palavra (Montserrat, palavra falada em amarelo). Precisa de `ffmpeg`
+com libass e de `pip install -e ".[cortes]"` para transcrever.
+
+    python -m postador.cortes transcrever PODCAST.mp4        # 1x, demora
+    python -m postador.cortes ler PODCAST.palavras.json      # escolher trechos
+    python -m postador.cortes cortar PODCAST.mp4 --de 12:03 --ate 13:01 \
+        --palavras PODCAST.palavras.json --saida cortes/corte1.mp4 --titulo "..."
+
 Corrigir um defeito aqui conserta todos os clientes de uma vez. Foi por isso
 que o motor saiu de dentro do Arco Real: as correções de agosto — `+faststart`
 no reel, hospedagem automática, checagem do endereço público em vez do disco —
