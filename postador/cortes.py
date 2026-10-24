@@ -25,8 +25,9 @@ Dois enquadramentos:
 
     moldura   o vídeo 16:9 inteiro no meio, fundo desfocado, legenda embaixo.
               Ninguém sai do quadro. É o padrão para podcast com duas pessoas.
-    recorte   corta um retângulo 9:16 do quadro original (close). `--foco`
-              diz onde: 0.0 borda esquerda, 0.5 centro, 1.0 borda direita.
+    recorte   corta um retângulo 9:16 do quadro original (close). `--foco auto`
+              (padrão) segue quem está falando, via rastrear.py; um número
+              fixa: 0.0 borda esquerda, 0.5 centro, 1.0 borda direita.
 
 A legenda é ASS renderizada pelo libass dentro do ffmpeg, com a Montserrat do
 motor: frase curta (até 4 palavras), caixa alta, palavra falada em amarelo.
@@ -113,6 +114,23 @@ def extrair_audio(midia: Path, saida: Path) -> Path:
     return saida
 
 
+def _ler_wav(caminho, de=None, ate=None):
+    """WAV mono 16 kHz → (float32 em [-1, 1], deslocamento em s)."""
+    import wave
+
+    import numpy as np
+
+    with wave.open(str(caminho), "rb") as w:
+        if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (16000, 1, 2):
+            raise SystemExit(f"{caminho}: esperava WAV mono 16 kHz 16 bit")
+        n = w.getnframes()
+        a = min(n, max(0, int(segundos(de) * 16000))) if de is not None else 0
+        b = min(n, int(segundos(ate) * 16000)) if ate is not None else n
+        w.setpos(a)
+        bruto = w.readframes(max(0, b - a))
+    return np.frombuffer(bruto, np.int16).astype(np.float32) / 32768.0, a / 16000
+
+
 def transcrever(midia, modelo="small", idioma="pt", saida=None,
                 de=None, ate=None) -> Path:
     """Transcreve com tempo por palavra e grava `<midia>.palavras.json`.
@@ -130,25 +148,16 @@ def transcrever(midia, modelo="small", idioma="pt", saida=None,
         print(f"→ extraindo áudio para {wav.name}", file=sys.stderr)
         extrair_audio(midia, wav)
 
-    fonte = wav
-    desloc = 0.0
-    if de is not None or ate is not None:
-        # Recorta o WAV antes: o Whisper não aceita janela, e 1 min de áudio
-        # com modelo grande sai em segundos, não em horas.
-        de_s = segundos(de) if de is not None else 0.0
-        trecho = wav.with_name(f"{wav.stem}.{int(de_s)}.wav")
-        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-               "-ss", f"{de_s:.3f}", "-i", str(wav)]
-        if ate is not None:
-            cmd += ["-t", f"{segundos(ate) - de_s:.3f}"]
-        cmd += ["-c", "copy", str(trecho)]
-        subprocess.run(cmd, check=True)
-        fonte, desloc = trecho, de_s
+    # O vetor vai direto ao modelo, sem o PyAV que o faster-whisper usaria
+    # para abrir o arquivo: a versão do PyAV muda a assinatura e quebra.
+    # Com `--de/--ate` recorta o vetor: 1 min de áudio com modelo grande sai
+    # em segundos, não em horas.
+    audio, desloc = _ler_wav(wav, de, ate)
 
     print(f"→ carregando Whisper {modelo} (CPU int8)", file=sys.stderr)
     w = WhisperModel(modelo, device="cpu", compute_type="int8")
     segmentos, info = w.transcribe(
-        str(fonte), language=idioma, beam_size=5,
+        audio, language=idioma, beam_size=5,
         word_timestamps=True, vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 400},
     )
@@ -298,12 +307,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 # 4. Cortar
 # ---------------------------------------------------------------------------
 
-def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco=0.5,
+def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
            titulo=None, qualidade=18) -> Path:
     """Recorta [de, ate] de `midia` num reel 1080x1920 com legenda queimada.
 
     `palavras`: caminho do .palavras.json, lista de palavras, ou None (sem
-    legenda). `foco` só vale no modo `recorte`.
+    legenda). `foco` só vale no modo `recorte`: "auto" ou fração 0–1.
     """
     midia, saida = Path(midia), Path(saida)
     de_s, ate_s = segundos(de), segundos(ate)
@@ -320,9 +329,16 @@ def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco=0.5,
             "[fd][fr]overlay=(W-w)/2:(H-h)/2-110,format=yuv420p[v0]"
         )
     elif modo == "recorte":
-        foco = min(1.0, max(0.0, float(foco)))
+        if str(foco).strip().lower() == "auto":
+            # Segue quem fala: rostos + boca que mexe, cortes secos entre eles.
+            from .rastrear import _dimensoes, expressao_x, segmentos
+            w, h = _dimensoes(midia)
+            x = expressao_x(segmentos(midia, de_s, ate_s), w, h)
+        else:
+            f = min(1.0, max(0.0, float(foco)))
+            x = f"(iw-ih*9/16)*{f}"
         video = (
-            f"[0:v]crop=ih*9/16:ih:(iw-ih*9/16)*{foco}:0,"
+            f"[0:v]crop=ih*9/16:ih:'{x}':0,"
             f"scale={LARGURA}:{ALTURA},format=yuv420p[v0]"
         )
     else:
@@ -403,7 +419,8 @@ def main(argv=None):
     c.add_argument("--saida", required=True)
     c.add_argument("--palavras", help=".palavras.json (sem ele, sem legenda)")
     c.add_argument("--modo", default="moldura", choices=["moldura", "recorte"])
-    c.add_argument("--foco", type=float, default=0.5)
+    c.add_argument("--foco", default="auto",
+                   help="auto (segue quem fala) ou 0.0–1.0 fixo (padrão auto)")
     c.add_argument("--titulo")
     c.add_argument("--crf", type=int, default=18)
 

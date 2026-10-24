@@ -12,7 +12,7 @@ dependencies = [
 # Só quem recorta podcast (postador.cortes) precisa do Whisper — é pesado e
 # o robô de postagem não o usa. Instalar com:  pip install -e ".[cortes]"
 [project.optional-dependencies]
-cortes = ["faster-whisper>=1.1"]
+cortes = ["faster-whisper>=1.1", "numpy>=1.26", "opencv-python-headless>=4.8,<5"]
 
 [build-system]
 requires = ["setuptools>=68"]
