@@ -46,6 +46,7 @@ LARGURA_AMOSTRA = 640
 JANELA = 1.0            # s por decisão
 MIN_SEGMENTO = 1.5      # s
 TROCA = 1.3             # a outra pessoa precisa mexer 30% mais a boca
+FALA = 2.5              # movimento de boca por janela abaixo disto é ruído
 RAIO_GRUPO = 0.08       # fração da largura: rostos mais perto que isto, e de
                         # tamanho parecido, são a mesma pessoa
 PRESENCA_MINIMA = 0.15  # grupo visto em menos de 15% das amostras é ruído
@@ -206,7 +207,10 @@ def _decidir(mov, duracao):
     for ini in range(0, len(mov), por_janela):
         m = mov[ini: ini + por_janela].sum(axis=0)
         melhor = int(np.argmax(m))
-        if melhor != atual and m[melhor] > TROCA * m[atual] and m[melhor] > 0:
+        # Troca só com fala de verdade: quem fala marca 20 a 45 por janela,
+        # ruído de quem ouve marca 0 a 1,5. Sem o piso, a primeira janela
+        # trocava para qualquer um acima de zero.
+        if melhor != atual and m[melhor] > TROCA * m[atual] and m[melhor] > FALA:
             atual = melhor
         escolhas.append([ini * PASSO, atual])
     segs = []
