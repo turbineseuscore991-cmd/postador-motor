@@ -307,12 +307,55 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 # 4. Cortar
 # ---------------------------------------------------------------------------
 
+ALTURA_COM_TARJA = 0.82    # fração do quadro que sobra acima da tarja de TV
+
+
+def _tem_tarja(midia, de, ate) -> bool:
+    """Há letreiro azul de TV na faixa de baixo em algum momento do trecho?
+
+    Mede, 1 vez por segundo, a fração de azul SATURADO nos 18% de baixo do
+    quadro. Paletó azul-marinho é azul escuro e dessaturado: no estúdio da
+    GLESP ele chega a 0,19; a tarja fica em 0,30 ou mais. Basta aparecer em
+    3 s do trecho: o enquadramento é um só para o corte inteiro, e tarja
+    cortada ao meio por 3 s já é feio.
+    """
+    import cv2
+    import numpy as np
+
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", f"{de:.3f}", "-t", f"{ate - de:.3f}",
+         "-i", str(midia), "-vf", "fps=1,scale=320:-2", "-f", "rawvideo",
+         "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+    if not raw:
+        return False
+    # altura da amostra: 320 de largura, proporção do vídeo
+    largura, altura = _dimensoes_video(midia)
+    h = int(round(altura * 320 / largura / 2)) * 2
+    n = len(raw) // (h * 320 * 3)
+    if n == 0:
+        return False
+    seq = np.frombuffer(raw, np.uint8)[: n * h * 320 * 3].reshape(n, h, 320, 3)
+    com_tarja = 0
+    for img in seq:
+        hsv = cv2.cvtColor(np.ascontiguousarray(img[int(h * 0.82):]), cv2.COLOR_RGB2HSV)
+        azul = ((hsv[..., 0] > 100) & (hsv[..., 0] < 130)
+                & (hsv[..., 1] > 110) & (hsv[..., 2] > 60)).mean()
+        com_tarja += azul > 0.25
+    return com_tarja >= 3
+
+
+def _dimensoes_video(midia):
+    from .rastrear import _dimensoes
+    return _dimensoes(midia)
+
+
 def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
-           titulo=None, qualidade=18) -> Path:
+           titulo=None, qualidade=18, barra="auto") -> Path:
     """Recorta [de, ate] de `midia` num reel 1080x1920 com legenda queimada.
 
     `palavras`: caminho do .palavras.json, lista de palavras, ou None (sem
     legenda). `foco` só vale no modo `recorte`: "auto" ou fração 0–1.
+    `barra`: "auto" detecta tarja de TV embaixo e a corta fora; True/False força.
     """
     midia, saida = Path(midia), Path(saida)
     de_s, ate_s = segundos(de), segundos(ate)
@@ -329,16 +372,22 @@ def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
             "[fd][fr]overlay=(W-w)/2:(H-h)/2-110,format=yuv420p[v0]"
         )
     elif modo == "recorte":
+        from .rastrear import _dimensoes, expressao_x, segmentos
+        w, h = _dimensoes(midia)
+        # Tarja de TV embaixo (nome do programa, letreiro rolando) vira um
+        # pedaço ilegível no 9:16. Se está lá, o recorte fica com os 82% de
+        # cima do quadro, presos ao topo: o rosto nunca está na tarja.
+        alt = ALTURA_COM_TARJA if (
+            barra is True or (barra == "auto" and _tem_tarja(midia, de_s, ate_s))) else 1.0
+        corte_h = int(h * alt) // 2 * 2
+        corte_w = int(corte_h * 9 / 16) // 2 * 2
         if str(foco).strip().lower() == "auto":
             # Segue quem fala: rostos + boca que mexe, cortes secos entre eles.
-            from .rastrear import _dimensoes, expressao_x, segmentos
-            w, h = _dimensoes(midia)
-            x = expressao_x(segmentos(midia, de_s, ate_s), w, h)
+            x = expressao_x(segmentos(midia, de_s, ate_s), w, corte_w)
         else:
-            f = min(1.0, max(0.0, float(foco)))
-            x = f"(iw-ih*9/16)*{f}"
+            x = str(int((w - corte_w) * min(1.0, max(0.0, float(foco)))))
         video = (
-            f"[0:v]crop=ih*9/16:ih:'{x}':0,"
+            f"[0:v]crop={corte_w}:{corte_h}:'{x}':0,"
             f"scale={LARGURA}:{ALTURA},format=yuv420p[v0]"
         )
     else:
@@ -423,6 +472,8 @@ def main(argv=None):
                    help="auto (segue quem fala) ou 0.0–1.0 fixo (padrão auto)")
     c.add_argument("--titulo")
     c.add_argument("--crf", type=int, default=18)
+    c.add_argument("--tarja", default="auto", choices=["auto", "sim", "nao"],
+                   help="recorte: há tarja de TV embaixo a cortar fora? (padrão auto)")
 
     a = ap.parse_args(argv)
     if a.cmd == "transcrever":
@@ -432,7 +483,8 @@ def main(argv=None):
         ler(a.palavras, janela=a.janela)
     elif a.cmd == "cortar":
         cortar(a.midia, a.de, a.ate, a.saida, palavras=a.palavras, modo=a.modo,
-               foco=a.foco, titulo=a.titulo, qualidade=a.crf)
+               foco=a.foco, titulo=a.titulo, qualidade=a.crf,
+               barra={"auto": "auto", "sim": True, "nao": False}[a.tarja])
 
 
 if __name__ == "__main__":

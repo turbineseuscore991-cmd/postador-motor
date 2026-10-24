@@ -1,31 +1,33 @@
 """
 rastrear.py — Em qual rosto o close 9:16 fica, segundo a segundo.
 
-Num podcast de duas pessoas, recortar um retângulo fixo deixa metade do
-episódio com o ouvinte na tela e quem fala fora dela. A Opus e a Klap
-resolvem com "detecção de orador ativo"; aqui é a mesma ideia, leve:
-rostos pelo YuNet (modelo de 230 KB que viaja com o motor) e a BOCA que
-mais se mexe diz quem está falando.
+Num podcast de duas ou três pessoas, recortar um retângulo fixo deixa quem
+ouve na tela e quem fala fora dela. A Opus e a Klap resolvem com "detecção
+de orador ativo"; aqui é a mesma ideia, leve: rostos pelo YuNet (modelo de
+230 KB que viaja com o motor) e a BOCA que mais se mexe diz quem fala.
 
-    segmentos(midia, de, ate)  →  [(t_relativo, foco), ...]
+    segmentos(midia, de, ate)  →  [(t_relativo, centro_x), ...]
 
-`foco` é a fração horizontal do recorte (0 = borda esquerda, 1 = direita),
-pronta para `cortes.cortar(..., modo="recorte")`. Os cortes são secos, como
-as ferramentas fazem: ninguém quer a câmera deslizando entre dois rostos.
+`centro_x` é a fração horizontal (0 = borda esquerda, 1 = direita) onde o
+rosto escolhido está; `expressao_x` converte isso no `x` do crop do ffmpeg.
+Os cortes são secos, como as ferramentas fazem: ninguém quer a câmera
+deslizando entre dois rostos.
 
 Como decide, em ordem:
   1. amostra o trecho a 4 quadros/s em 640 px, cinza, via ffmpeg
   2. separa os PLANOS: podcast editado troca de câmera, e cada plano tem
      suas pessoas em seus lugares
-  3. em cada plano, detecta rostos e agrupa por posição horizontal em
-     "faixas" (uma por pessoa); a boca de cada faixa vem dos pontos do YuNet
-  4. movimento = diferença entre amostras na região FIXA da boca de cada
-     faixa, menos a diferença na testa/olhos (cabeça mexendo não conta).
-     Região fixa porque o detector falha justo com a boca aberta, e a pessoa
-     não sai do lugar dentro do plano
-  5. por janela de 1 s, a faixa com mais movimento fala; só troca se a outra
+  3. em cada plano, detecta rostos e agrupa por posição E tamanho (o quadro
+     da parede atrás tem rosto também, e o YuNet acha; ele fica na mesma
+     coluna que a pessoa, mas noutra altura e noutro tamanho)
+  4. descarta grupo PARADO: retrato pintado não pisca nem respira
+  5. um rosto muito maior que os outros é close de uma pessoa só: centra nele
+  6. com dois ou mais, movimento = diferença entre amostras na região FIXA
+     da boca de cada um, menos a diferença na testa/olhos (cabeça mexendo
+     não conta). Região fixa porque o detector falha justo com a boca aberta
+     e a pessoa não sai do lugar dentro do plano
+  7. por janela de 1 s, quem mais mexe a boca fala; só troca se o outro
      passa de 1,3x, e nenhum segmento dura menos de 1,5 s
-  6. plano com um rosto só: centra nele. Sem rosto: centro do quadro
 
 Sem o modelo YuNet cai no Haar cascade do OpenCV, que é pior de ângulo e de
 boca aberta, mas não depende de arquivo nenhum.
@@ -44,8 +46,12 @@ LARGURA_AMOSTRA = 640
 JANELA = 1.0            # s por decisão
 MIN_SEGMENTO = 1.5      # s
 TROCA = 1.3             # a outra pessoa precisa mexer 30% mais a boca
-RAIO_FAIXA = 0.12       # fração da largura: rostos mais perto que isto são o mesmo
-PRESENCA_MINIMA = 0.15  # faixa vista em menos de 15% das amostras é ruído
+RAIO_GRUPO = 0.08       # fração da largura: rostos mais perto que isto, e de
+                        # tamanho parecido, são a mesma pessoa
+PRESENCA_MINIMA = 0.15  # grupo visto em menos de 15% das amostras é ruído
+PARADO = 1.0            # diferença média (0–255) dentro do rosto abaixo disto
+                        # é retrato na parede, não gente
+CLOSE = 2.5             # rosto com área 2,5x maior que o segundo é close
 CORTE_DE_CENA = 28.0    # diferença média (0–255) entre amostras que marca troca de plano
 
 
@@ -117,46 +123,70 @@ def cenas(quadros):
             if limites[i + 1] > limites[i]]
 
 
-def _faixas(deteccoes, largura):
-    """Agrupa rostos por centro horizontal.
+def _recorte(caixa, H, W, y0=0.0, y1=1.0, x0=0.0, x1=1.0):
+    x, y, w, h = caixa
+    return (slice(int(max(0, y + h * y0)), int(min(H, y + h * y1))),
+            slice(int(max(0, x + w * x0)), int(min(W, x + w * x1))))
 
-    Devolve [{cx, caixa, boca, presenca}], com caixa e boca MEDIANAS do plano:
-    é nessa região fixa que o movimento é medido, detecte ou não cada quadro.
+
+def _movimento_na_caixa(quadros, caixa):
+    """Diferença média entre amostras consecutivas dentro da caixa."""
+    H, W = quadros.shape[1:]
+    reg = _recorte(caixa, H, W)
+    if quadros[0][reg].size == 0 or len(quadros) < 2:
+        return 0.0
+    a = quadros[:-1, reg[0], reg[1]].astype(np.int16)
+    b = quadros[1:, reg[0], reg[1]].astype(np.int16)
+    return float(np.abs(a - b).mean())
+
+
+def pessoas(deteccoes, quadros):
+    """Quem está no plano, de verdade.
+
+    Devolve [{cx, caixa, boca, presenca, movimento, area}] com caixa e boca
+    MEDIANAS do plano: é nessa região fixa que o movimento é medido,
+    detecte ou não cada quadro. Retratos na parede saem no filtro de
+    movimento; grupos fugazes, no de presença.
     """
-    todas = sorted((r for ds in deteccoes for r in ds), key=lambda r: r[0] + r[2] / 2)
-    grupos, atual = [], []
-    for r in todas:
-        c = (r[0] + r[2] / 2) / largura
-        if atual and c - (atual[-1][0] + atual[-1][2] / 2) / largura > RAIO_FAIXA:
-            grupos.append(atual)
-            atual = []
-        atual.append(r)
-    if atual:
-        grupos.append(atual)
+    H, W = quadros.shape[1:]
+    grupos = []                        # cada um: {"itens": [(quadro, rosto)]}
+    for t, ds in enumerate(deteccoes):
+        for r in ds:
+            cx, cy, tam = (r[0] + r[2] / 2) / W, (r[1] + r[3] / 2) / W, r[2]
+            for g in grupos:
+                gx, gy, gt = g["ref"]
+                if abs(cx - gx) < RAIO_GRUPO and abs(cy - gy) < RAIO_GRUPO \
+                        and 0.6 < tam / gt < 1.6:
+                    g["itens"].append((t, r))
+                    break
+            else:
+                grupos.append({"ref": (cx, cy, tam), "itens": [(t, r)]})
+
     n = max(1, len(deteccoes))
-    faixas = []
+    saida = []
     for g in grupos:
-        presenca = len(g) / n
+        presenca = len({t for t, _ in g["itens"]}) / n
         if presenca < PRESENCA_MINIMA:
             continue
-        med = np.median(np.array(g), axis=0)
-        faixas.append({"cx": float((med[0] + med[2] / 2) / largura),
-                       "caixa": med[:4], "boca": med[4:6], "presenca": presenca})
-    return faixas
+        med = np.median(np.array([r for _, r in g["itens"]]), axis=0)
+        caixa = med[:4]
+        mov = _movimento_na_caixa(quadros, caixa)
+        saida.append({"cx": float((caixa[0] + caixa[2] / 2) / W), "caixa": caixa,
+                      "boca": med[4:6], "presenca": presenca, "movimento": mov,
+                      "area": float(caixa[2] * caixa[3])})
+    vivos = [p for p in saida if p["movimento"] >= PARADO]
+    return vivos if vivos else saida
 
 
 def movimento_boca(quadros, faixas):
-    """(N, F): quanto a boca de cada faixa mexeu entre a amostra e a anterior."""
+    """(N, F): quanto a boca de cada pessoa mexeu entre a amostra e a anterior."""
     H, W = quadros.shape[1:]
     regioes = []
     for f in faixas:
         x, y, w, h = f["caixa"]
         bx, by = f["boca"]
-        rw, rh = w * 0.5, h * 0.3
-        boca = (slice(int(max(0, by - rh / 2)), int(min(H, by + rh / 2))),
-                slice(int(max(0, bx - rw / 2)), int(min(W, bx + rw / 2))))
-        cima = (slice(int(max(0, y)), int(min(H, y + h * 0.45))),
-                slice(int(max(0, x)), int(min(W, x + w))))
+        boca = _recorte((bx - w * 0.25, by - h * 0.15, w * 0.5, h * 0.3), H, W)
+        cima = _recorte((x, y, w, h * 0.45), H, W)
         regioes.append((boca, cima))
     mov = np.zeros((len(quadros), len(faixas)))
     for t in range(1, len(quadros)):
@@ -169,7 +199,7 @@ def movimento_boca(quadros, faixas):
 
 
 def _decidir(mov, duracao):
-    """[(t_relativo_ao_plano, faixa)] — quem fala, com histerese e sem picotar."""
+    """[(t_relativo_ao_plano, pessoa)] — quem fala, com histerese e sem picotar."""
     por_janela = max(1, int(round(JANELA / PASSO)))
     atual = int(np.argmax(mov.sum(axis=0)))      # quem mais falou abre o plano
     escolhas = []
@@ -196,57 +226,51 @@ def _decidir(mov, duracao):
     return [(t, i) for t, i in segs]
 
 
-def _foco(cx, largura, altura):
-    """Centro do rosto (fração) → fração do recorte 9:16, com as bordas presas."""
-    corte = altura * 9 / 16
-    folga = largura - corte
-    if folga <= 0:
-        return 0.5
-    return float(min(1.0, max(0.0, (cx * largura - corte / 2) / folga)))
-
-
 def segmentos(midia, de, ate, verboso=True):
-    """[(t_relativo_inicio, foco)] — quem está na tela em cada momento."""
+    """[(t_relativo_inicio, centro_x)] — quem está na tela em cada momento."""
     quadros = amostrar(midia, de, ate)
     if len(quadros) == 0:
         return [(0.0, 0.5)]
-    altura, largura = quadros.shape[1:]
     detectar = Detector()
     saida = []
     for (a, b) in cenas(quadros):
         t0 = a * PASSO
-        ds = [detectar(q) for q in quadros[a:b]]
-        faixas = _faixas(ds, largura)
-        if not faixas:
+        bloco = quadros[a:b]
+        gente = pessoas([detectar(q) for q in bloco], bloco)
+        gente.sort(key=lambda p: -p["area"])
+        if not gente:
             segs = [(t0, 0.5)]
-        elif len(faixas) == 1:
-            segs = [(t0, _foco(faixas[0]["cx"], largura, altura))]
+        elif len(gente) == 1 or gente[0]["area"] >= CLOSE * gente[1]["area"]:
+            segs = [(t0, gente[0]["cx"])]
         else:
-            mov = movimento_boca(quadros[a:b], faixas)
-            segs = [(t0 + t, _foco(faixas[i]["cx"], largura, altura))
-                    for t, i in _decidir(mov, (b - a) * PASSO)]
+            mov = movimento_boca(bloco, gente)
+            segs = [(t0 + t, gente[i]["cx"]) for t, i in _decidir(mov, (b - a) * PASSO)]
         if verboso:
             print(f"→ plano {t0:6.2f}s–{b * PASSO:6.2f}s ({detectar.nome}): "
-                  f"{len(faixas)} pessoa(s) "
-                  + ", ".join(f"x={f['cx']:.2f} ({f['presenca']:.0%})" for f in faixas),
+                  f"{len(gente)} pessoa(s) "
+                  + ", ".join(f"x={p['cx']:.2f} (vista {p['presenca']:.0%}, "
+                              f"mexe {p['movimento']:.1f})" for p in gente),
                   file=sys.stderr)
-            for t, f in segs:
-                print(f"    {t:6.2f}s → foco {f:.2f}", file=sys.stderr)
+            for t, cx in segs:
+                print(f"    {t:6.2f}s → centro {cx:.2f}", file=sys.stderr)
         saida.extend(segs)
 
     fundido = []
-    for t, f in saida:
-        if fundido and abs(fundido[-1][1] - f) < 0.01:
+    for t, cx in saida:
+        if fundido and abs(fundido[-1][1] - cx) < 0.01:
             continue
-        fundido.append((t, f))
+        fundido.append((t, cx))
     return fundido
 
 
-def expressao_x(segs, largura_px, altura_px):
-    """Expressão do ffmpeg para o `x` do crop: pedaços constantes no tempo."""
-    corte = int(altura_px * 9 / 16)
-    folga = largura_px - corte
-    xs = [int(round(f * folga)) for _, f in segs]
+def expressao_x(segs, largura_px, corte_px):
+    """Expressão do ffmpeg para o `x` do crop: pedaços constantes no tempo.
+
+    `corte_px` é a largura do recorte; o rosto fica no centro dele, com as
+    bordas do quadro presas.
+    """
+    folga = max(0, largura_px - corte_px)
+    xs = [int(round(min(folga, max(0.0, cx * largura_px - corte_px / 2)))) for _, cx in segs]
     expr = str(xs[-1])
     for (t, _), x in zip(reversed(segs[1:]), reversed(xs[:-1])):
         expr = f"if(lt(t,{t:.3f}),{x},{expr})"
