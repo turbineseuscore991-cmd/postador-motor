@@ -406,7 +406,8 @@ def _dimensoes_video(midia):
 
 def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
            titulo=None, qualidade=18, barra="auto", marca=None,
-           encerramento=None, cartao=CARTAO_PADRAO, trocas=None) -> Path:
+           encerramento=None, cartao=CARTAO_PADRAO, trocas=None,
+           forcar=None) -> Path:
     """Recorta [de, ate] de `midia` num reel 1080x1920 com legenda queimada.
 
     `palavras`: caminho do .palavras.json, lista de palavras, ou None (sem
@@ -442,7 +443,18 @@ def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
         corte_w = int(corte_h * 9 / 16) // 2 * 2
         if str(foco).strip().lower() == "auto":
             # Segue quem fala: rostos + boca que mexe, cortes secos entre eles.
-            x = expressao_x(segmentos(midia, de_s, ate_s), w, corte_w)
+            segs = segmentos(midia, de_s, ate_s)
+            # `forcar`: [(t, cx)] com t em segundos do corte. A mão do editor
+            # vale da marca até a próxima marca forçada; o automático cobre o
+            # resto. Serve para o fim de plano em que o ouvinte se mexe mais
+            # que quem começa a falar.
+            for t_f, cx_f in sorted(forcar or []):
+                proximo = min([t for t, _ in forcar if t > t_f], default=float("inf"))
+                segs = [(t, cx) for t, cx in segs if not (t_f <= t < proximo)]
+                segs.append((t_f, cx_f))
+                segs.sort()
+                print(f"  forçado: {t_f:.2f}s → centro {cx_f:.2f}", file=sys.stderr)
+            x = expressao_x(segs, w, corte_w)
         else:
             x = str(int((w - corte_w) * min(1.0, max(0.0, float(foco)))))
         video = (
@@ -552,6 +564,9 @@ def main(argv=None):
     c.add_argument("--cartao", type=float, default=CARTAO_PADRAO,
                    help=f"segundos do cartão final (padrão {CARTAO_PADRAO})")
     c.add_argument("--trocar", help='correções de nome na legenda: "Sereza=Ceresa,Adade=Abdalla"')
+    c.add_argument("--forcar",
+                   help='recorte auto: força o centro a partir de um segundo do corte, '
+                        '"53.4=0.78,58=0.15" (0 = borda esquerda, 1 = direita)')
 
     a = ap.parse_args(argv)
     if a.cmd == "transcrever":
@@ -565,11 +580,16 @@ def main(argv=None):
             if "=" in par:
                 errado, certo = par.split("=", 1)
                 trocas[errado.strip().lower()] = certo.strip()
+        forcar = []
+        for par in (a.forcar or "").split(","):
+            if "=" in par:
+                t, cx = par.split("=", 1)
+                forcar.append((segundos(t), float(cx)))
         cortar(a.midia, a.de, a.ate, a.saida, palavras=a.palavras, modo=a.modo,
                foco=a.foco, titulo=a.titulo, qualidade=a.crf,
                barra={"auto": "auto", "sim": True, "nao": False}[a.tarja],
                marca=a.marca, encerramento=a.encerramento, cartao=a.cartao,
-               trocas=trocas)
+               trocas=trocas, forcar=forcar)
 
 
 if __name__ == "__main__":
