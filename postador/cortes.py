@@ -56,8 +56,29 @@ COR_BORDA = "&H00000000"      # preto
 COR_SOMBRA = "&H80000000"     # preto meio transparente
 TAM_LEGENDA = 74
 TAM_TITULO = 60
+TAM_MARCA = 30                 # a @ discreta no canto
+TAM_CARTAO = 78                # o cartão final "episódio completo no YouTube"
 MARGEM_LEGENDA = 470           # px a partir de baixo: acima da UI do Instagram
 MARGEM_TITULO = 260            # px a partir de cima: abaixo da UI do Instagram
+MARGEM_MARCA = 195             # logo acima do título, canto direito
+CARTAO_PADRAO = 2.5            # s de cartão final
+
+# O Whisper erra nome próprio com constância. O que ele escreve → o certo.
+# Comparação sem maiúsculas e sem a pontuação colada; `--trocar` acrescenta.
+CORRECOES = {
+    "sereza": "Ceresa", "cereza": "Ceresa", "célez": "Ceresa", "ceresa": "Ceresa",
+    "glespie": "GLESP", "glespe": "GLESP", "glesp": "GLESP", "glasp": "GLESP",
+    "aglespe": "a GLESP",
+}
+
+
+def _corrigir(palavra: str, extras=None) -> str:
+    tabela = dict(CORRECOES, **(extras or {}))
+    miolo = palavra.strip(".,!?;:\"'()")
+    if not miolo:
+        return palavra
+    certo = tabela.get(miolo.lower())
+    return palavra.replace(miolo, certo, 1) if certo else palavra
 
 MAX_PALAVRAS_BLOCO = 4
 MAX_CARACTERES_BLOCO = 24
@@ -256,9 +277,18 @@ def _esc_ass(txt: str) -> str:
     return txt.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
 
 
-def gerar_ass(palavras, de, ate, titulo=None, maiusculas=True) -> str:
+def gerar_ass(palavras, de, ate, titulo=None, maiusculas=True, marca=None,
+              encerramento=None, cartao=0.0, trocas=None) -> str:
     """Um evento por palavra: a frase inteira na tela, a palavra ativa em
-    amarelo. Mais robusto que o karaokê `\\k`, que alguns players ignoram."""
+    amarelo. Mais robusto que o karaokê `\\k`, que alguns players ignoram.
+
+    `marca`: texto pequeno no canto (a @ do canal), o vídeo inteiro.
+    `encerramento`: linhas separadas por "|" para o cartão final, que ocupa
+    os `cartao` segundos DEPOIS do fim da fala (o vídeo é esticado em
+    `cortar`). A última linha sai menor e em amarelo. Chamada para o episódio
+    completo vai aqui, no fim, e não em cima do vídeo: tarja o tempo todo
+    compete com o gancho e cheira a anúncio.
+    """
     de, ate = segundos(de), segundos(ate)
     # Só palavra que COMEÇA dentro do corte: a que começou antes já está
     # pela metade no áudio e apareceria inteira na tela.
@@ -268,23 +298,38 @@ def gerar_ass(palavras, de, ate, titulo=None, maiusculas=True) -> str:
 ScriptType: v4.00+
 PlayResX: {LARGURA}
 PlayResY: {ALTURA}
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Legenda,Montserrat,{TAM_LEGENDA},{COR_TEXTO},{COR_ATIVA},{COR_BORDA},{COR_SOMBRA},-1,0,0,0,100,100,1,0,1,6,3,2,60,60,{MARGEM_LEGENDA},1
 Style: Titulo,Montserrat,{TAM_TITULO},{COR_TEXTO},{COR_ATIVA},{COR_BORDA},&H99000000,-1,0,0,0,100,100,0,0,3,14,0,8,90,90,{MARGEM_TITULO},1
+Style: Marca,Montserrat,{TAM_MARCA},&H50FFFFFF,{COR_ATIVA},&H50000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,0,9,50,50,{MARGEM_MARCA},1
+Style: Cartao,Montserrat,{TAM_CARTAO},{COR_TEXTO},{COR_ATIVA},{COR_BORDA},{COR_SOMBRA},-1,0,0,0,100,100,1,0,1,4,2,5,80,80,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     eventos = []
     fim_clipe = ate - de
+    fim_total = fim_clipe + (cartao if encerramento else 0.0)
     if titulo:
         t = _esc_ass(titulo.upper() if maiusculas else titulo)
         eventos.append(f"Dialogue: 0,{_tempo_ass(0)},{_tempo_ass(fim_clipe)},"
                        f"Titulo,,0,0,0,,{t}")
+    if marca:
+        eventos.append(f"Dialogue: 0,{_tempo_ass(0)},{_tempo_ass(fim_total)},"
+                       f"Marca,,0,0,0,,{_esc_ass(marca)}")
+    if encerramento:
+        linhas = [l.strip() for l in str(encerramento).split("|") if l.strip()]
+        grandes = linhas[:-1] if len(linhas) >= 2 else linhas
+        texto = "\\N".join(_esc_ass(l.upper() if maiusculas else l) for l in grandes)
+        if len(linhas) >= 2:
+            texto += (f"\\N{{\\fs{int(TAM_CARTAO * 0.55)}\\c{COR_ATIVA}}}"
+                      f"{_esc_ass(linhas[-1])}")
+        eventos.append(f"Dialogue: 2,{_tempo_ass(fim_clipe)},{_tempo_ass(fim_total)},"
+                       f"Cartao,,0,0,0,,{{\\fad(250,0)}}{texto}")
 
     blocos = _blocos(dentro)
     for n, bloco in enumerate(blocos):
@@ -301,7 +346,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 continue
             partes = []
             for j, q in enumerate(bloco):
-                w = _esc_ass(q["p"].upper() if maiusculas else q["p"])
+                w = _corrigir(q["p"], trocas)
+                w = _esc_ass(w.upper() if maiusculas else w)
                 if j == k:
                     partes.append(f"{{\\c{COR_ATIVA}\\fscx106\\fscy106}}{w}{{\\r}}")
                 else:
@@ -358,12 +404,16 @@ def _dimensoes_video(midia):
 
 
 def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
-           titulo=None, qualidade=18, barra="auto") -> Path:
+           titulo=None, qualidade=18, barra="auto", marca=None,
+           encerramento=None, cartao=CARTAO_PADRAO, trocas=None) -> Path:
     """Recorta [de, ate] de `midia` num reel 1080x1920 com legenda queimada.
 
     `palavras`: caminho do .palavras.json, lista de palavras, ou None (sem
     legenda). `foco` só vale no modo `recorte`: "auto" ou fração 0–1.
     `barra`: "auto" detecta tarja de TV embaixo e a corta fora; True/False força.
+    `marca`: a @ do canal, pequena, no canto. `encerramento`: linhas "a|b|c"
+    do cartão final de `cartao` segundos, sobre o último quadro escurecido.
+    `trocas`: {errado: certo} extra para nomes na legenda.
     """
     midia, saida = Path(midia), Path(saida)
     de_s, ate_s = segundos(de), segundos(ate)
@@ -405,13 +455,25 @@ def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
     # o filtro `subtitles` engasga com dois-pontos, vírgula e aspas no caminho.
     ass_tmp = saida.parent / f"_legenda_{os.getpid()}.ass"
     ass_final = saida.with_suffix(".ass")
-    tem_legenda = palavras is not None or titulo
+    tem_legenda = palavras is not None or titulo or marca or encerramento
+    audio_extra = []
     if tem_legenda:
         lista = ([] if palavras is None else
                  carregar_palavras(palavras) if isinstance(palavras, (str, Path))
                  else palavras)
-        ass_tmp.write_text(gerar_ass(lista, de_s, ate_s, titulo=titulo))
-        video += f";[v0]subtitles={ass_tmp.name}:fontsdir={FONTES}[v]"
+        ass_tmp.write_text(gerar_ass(lista, de_s, ate_s, titulo=titulo, marca=marca,
+                                     encerramento=encerramento, cartao=cartao,
+                                     trocas=trocas))
+        fonte = "v0"
+        if encerramento:
+            # Cartão final: o último quadro fica parado mais `cartao` s,
+            # escurece, e o texto entra pelo ASS. Áudio ganha silêncio igual.
+            dur = ate_s - de_s
+            video += (f";[v0]tpad=stop_mode=clone:stop_duration={cartao:.2f},"
+                      f"drawbox=c=black@0.78:t=fill:enable='gte(t,{dur:.3f})'[v1]")
+            fonte = "v1"
+            audio_extra = ["-af", f"apad=pad_dur={cartao:.2f}"]
+        video += f";[{fonte}]subtitles={ass_tmp.name}:fontsdir={FONTES}[v]"
     else:
         video += ";[v0]null[v]"
 
@@ -421,6 +483,7 @@ def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
         "-filter_complex", video, "-map", "[v]", "-map", "0:a:0?",
         "-c:v", "libx264", "-preset", "medium", "-crf", str(qualidade),
         "-r", "30", "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
+        *audio_extra,
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         # +faststart: o Instagram baixa o arquivo e precisa do índice no começo.
         # Sem isso o reel sobe e falha no processamento — lição de agosto.
@@ -482,6 +545,12 @@ def main(argv=None):
     c.add_argument("--crf", type=int, default=18)
     c.add_argument("--tarja", default="auto", choices=["auto", "sim", "nao"],
                    help="recorte: há tarja de TV embaixo a cortar fora? (padrão auto)")
+    c.add_argument("--marca", help="a @ do canal, pequena, no canto superior")
+    c.add_argument("--encerramento",
+                   help='cartão final, linhas separadas por |: "EPISÓDIO COMPLETO|NO YOUTUBE|Estúdio X"')
+    c.add_argument("--cartao", type=float, default=CARTAO_PADRAO,
+                   help=f"segundos do cartão final (padrão {CARTAO_PADRAO})")
+    c.add_argument("--trocar", help='correções de nome na legenda: "Sereza=Ceresa,Adade=Abdalla"')
 
     a = ap.parse_args(argv)
     if a.cmd == "transcrever":
@@ -490,9 +559,16 @@ def main(argv=None):
     elif a.cmd == "ler":
         ler(a.palavras, janela=a.janela)
     elif a.cmd == "cortar":
+        trocas = {}
+        for par in (a.trocar or "").split(","):
+            if "=" in par:
+                errado, certo = par.split("=", 1)
+                trocas[errado.strip().lower()] = certo.strip()
         cortar(a.midia, a.de, a.ate, a.saida, palavras=a.palavras, modo=a.modo,
                foco=a.foco, titulo=a.titulo, qualidade=a.crf,
-               barra={"auto": "auto", "sim": True, "nao": False}[a.tarja])
+               barra={"auto": "auto", "sim": True, "nao": False}[a.tarja],
+               marca=a.marca, encerramento=a.encerramento, cartao=a.cartao,
+               trocas=trocas)
 
 
 if __name__ == "__main__":
