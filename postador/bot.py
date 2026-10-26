@@ -273,7 +273,11 @@ def _linha_curta(d: dict) -> str:
 
 
 def resp_todos() -> str:
-    blocos = ["📊 <b>Os três clientes</b>"]
+    # Conta em vez de cravar "três": a Lastrom saiu em 26/10 e o cabeçalho
+    # continuaria anunciando um cliente a mais do que lista.
+    n = len(clientes.CLIENTES)
+    nomes = {1: "o cliente", 2: "os dois clientes", 3: "os três clientes"}
+    blocos = [f'📊 <b>{nomes.get(n, f"os {n} clientes").capitalize()}</b>']
     for cli in clientes.CLIENTES:
         try:
             blocos.append(_linha_curta(_estado_de(cli)))

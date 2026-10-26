@@ -41,6 +41,12 @@ import unicodedata
 # repositórios de bot, e `hospedar.preparar()` clonando com ele. É a única
 # peça que falta para o resumo se atualizar com o Mac desligado.
 
+# A LASTROM SAIU em 26/10/2026 — o Luiz deixou de atender o cliente. O
+# workflow dela foi desligado (disabled_manually) e ela saiu desta lista,
+# para o "status" não reportar conta que não é mais dele. Nada foi apagado:
+# repositórios, token e histórico seguem no lugar, e reverter é recolocar o
+# bloco aqui e rodar `gh workflow enable publicar.yml` na pasta dela.
+
 # A ordem importa: é a ordem em que o resumo geral aparece no Telegram.
 CLIENTES = [
     {
@@ -56,13 +62,6 @@ CLIENTES = [
         # apelido que falta — o que falta o Luiz reescreve, o falso positivo
         # responde pelo cliente errado sem avisar.
         "apelidos": ["arco real", "arcoreal", "arco", "sagrado"],
-    },
-    {
-        "chave": "lastrom",
-        "nome": "Lastrom",
-        "arroba": "@lastrom.br",
-        "base": "https://turbineseuscore991-cmd.github.io/lastrom-midia",
-        "apelidos": ["lastrom", "lastron", "rui"],
     },
     {
         "chave": "bodes",
