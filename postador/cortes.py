@@ -70,6 +70,9 @@ CORRECOES = {
     "glespie": "GLESP", "glespe": "GLESP", "glesp": "GLESP", "glasp": "GLESP",
     "aglespe": "a GLESP", "aglespie": "a GLESP",
     "adade": "Haddad", "nuseadade": "Haddad",
+    "michelotto": "Micheloto", "miquelotto": "Micheloto", "miqueloto": "Micheloto",
+    "micheloti": "Micheloto", "michelote": "Micheloto",
+    "paparelli": "Paparelli", "paparele": "Paparelli", "papareli": "Paparelli",
 }
 
 
