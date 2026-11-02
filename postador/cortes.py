@@ -512,7 +512,7 @@ def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
 
 
 def encerrar(midia, saida, encerramento, cartao=CARTAO_PADRAO, marca=None,
-             qualidade=18) -> Path:
+             qualidade=18, preset="fast") -> Path:
     """Acrescenta o cartão final (e a @, se pedida) a um vídeo JÁ pronto.
 
     Para reel editado fora do motor: nada é cortado nem reenquadrado; o
@@ -534,8 +534,10 @@ def encerrar(midia, saida, encerramento, cartao=CARTAO_PADRAO, marca=None,
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-stats",
            "-i", str(midia.resolve()), "-filter_complex", video,
            "-map", "[v]", "-map", "0:a:0?", "-af", f"apad=pad_dur={cartao:.2f}",
-           "-c:v", "libx264", "-preset", "medium", "-crf", str(qualidade),
-           "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
+           # preset rápido: reel longo a 60 fps levaria meia hora no medium,
+           # e a plataforma recomprime de qualquer jeito
+           "-c:v", "libx264", "-preset", preset, "-crf", str(qualidade),
+           "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.2",
            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
            "-movflags", "+faststart", "-shortest", saida.name]
     try:
