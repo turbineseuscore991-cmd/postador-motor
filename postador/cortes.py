@@ -511,6 +511,42 @@ def cortar(midia, de, ate, saida, palavras=None, modo="moldura", foco="auto",
     return saida
 
 
+def encerrar(midia, saida, encerramento, cartao=CARTAO_PADRAO, marca=None,
+             qualidade=18) -> Path:
+    """Acrescenta o cartão final (e a @, se pedida) a um vídeo JÁ pronto.
+
+    Para reel editado fora do motor: nada é cortado nem reenquadrado; o
+    vídeo inteiro passa, o último quadro fica parado mais `cartao` s,
+    escurece e recebe o texto. Recodifica porque o texto é queimado.
+    """
+    midia, saida = Path(midia), Path(saida)
+    saida.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(midia)], capture_output=True, text=True, check=True)
+    dur = float(r.stdout.strip())
+    ass_tmp = saida.parent / f"_legenda_{os.getpid()}.ass"
+    ass_tmp.write_text(gerar_ass([], 0, dur, marca=marca, encerramento=encerramento,
+                                 cartao=cartao))
+    video = (f"[0:v]tpad=stop_mode=clone:stop_duration={cartao:.2f},"
+             f"drawbox=c=black@0.78:t=fill:enable='gte(t,{dur:.3f})',format=yuv420p[v1];"
+             f"[v1]subtitles={ass_tmp.name}:fontsdir={FONTES}[v]")
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-stats",
+           "-i", str(midia.resolve()), "-filter_complex", video,
+           "-map", "[v]", "-map", "0:a:0?", "-af", f"apad=pad_dur={cartao:.2f}",
+           "-c:v", "libx264", "-preset", "medium", "-crf", str(qualidade),
+           "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
+           "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+           "-movflags", "+faststart", "-shortest", saida.name]
+    try:
+        subprocess.run(cmd, check=True, cwd=saida.parent)
+    finally:
+        if ass_tmp.exists():
+            ass_tmp.unlink()
+    print(f"✓ {saida}  {inspecionar(saida)}", file=sys.stderr)
+    return saida
+
+
 def inspecionar(arquivo) -> str:
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -568,8 +604,19 @@ def main(argv=None):
                    help='recorte auto: força o centro a partir de um segundo do corte, '
                         '"53.4=0.78,58=0.15" (0 = borda esquerda, 1 = direita)')
 
+    e = sub.add_parser("encerrar", help="só o cartão final num vídeo já pronto")
+    e.add_argument("midia")
+    e.add_argument("--saida", required=True)
+    e.add_argument("--encerramento", default="EPISÓDIO COMPLETO|NO YOUTUBE|Estúdio GLESP")
+    e.add_argument("--cartao", type=float, default=CARTAO_PADRAO)
+    e.add_argument("--marca")
+    e.add_argument("--crf", type=int, default=18)
+
     a = ap.parse_args(argv)
-    if a.cmd == "transcrever":
+    if a.cmd == "encerrar":
+        encerrar(a.midia, a.saida, a.encerramento, cartao=a.cartao, marca=a.marca,
+                 qualidade=a.crf)
+    elif a.cmd == "transcrever":
         transcrever(a.midia, modelo=a.modelo, idioma=a.idioma, saida=a.saida,
                     de=a.de, ate=a.ate)
     elif a.cmd == "ler":
