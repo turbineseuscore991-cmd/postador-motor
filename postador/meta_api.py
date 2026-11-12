@@ -177,8 +177,11 @@ def ig_publicar_imagem(image_url, legenda):
 
 
 def ig_publicar_carrossel(urls, legenda):
-    if not 2 <= len(urls) <= 10:
-        raise MetaErro(f"carrossel aceita de 2 a 10 imagens, recebi {len(urls)}")
+    # O teto era 10 e ficou velho: a Meta passou a aceitar 20 por carrossel.
+    # Em 12/11 isso derrubou o Jantar Ritualistico com 20 quadros — saiu no
+    # Facebook e falhou no Instagram, deixando o post pela metade no ar.
+    if not 2 <= len(urls) <= 20:
+        raise MetaErro(f"carrossel aceita de 2 a 20 imagens, recebi {len(urls)}")
     t = _token_ig()
     filhos = []
     for u in urls:
